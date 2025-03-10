@@ -2,26 +2,30 @@ version: '3.8'
 
 services:
   stockanal_sys:
-    build: .
+    image: registry.cn-hangzhou.aliyuncs.com/ripper/stock-anal:latest
     ports:
-      - "8888:8888"
+      - "14588:8888"
     environment:
       - FLASK_ENV=production
       - FLASK_DEBUG=0
       - FLASK_APP=web_server.py
+      - API_PROVIDER=openai
+      - OPENAI_API_URL=
+      - OPENAI_API_KEY=
+      - OPENAI_API_MODEL=gemini-2.0-flash
+      - NEWS_MODEL=
+      - REDIS_URL=redis://redis:6379
+      - USE_REDIS_CACHE=True
+      - DATABASE_URL=sqlite:///data/stock_analyzer.db
+      - USE_DATABASE=True
+      - LOG_LEVEL=INFO
+      - LOG_FILE=logs/stock_analyzer.log
     volumes:
-    #  - sqlite_data:/app/data # 如果需要持久化数据，请使用sqlite_data 在env文件中设置USE_DATABASE=True
-      - .env:/app/.env # 环境变量.env文件
+      - ./sqlite_data:/app/data # 如果需要持久化数据，请使用sqlite_data 在env文件中设置USE_DATABASE=True
     depends_on:
       - redis
   # redis 缓存
   redis:
-    image: redis:6.2-alpine
-    ports:
-      - "6379:6379"
+    image: registry.cn-hangzhou.aliyuncs.com/ripper/redis:latest
     volumes:
-      - redis_data:/data
-
-volumes:
-  redis_data:
-  #sqlite_data: 
+      - ./redis_data:/data
