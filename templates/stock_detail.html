@@ -319,11 +319,11 @@
                 type: 'GET',
                 success: function(response) {
                     // 更新计时和进度
-                    elapsedTime = startTime + 1;
+                    // 不在这里更新elapsedTime，因为已经有timerInterval在更新processingTime
                     const progress = response.progress || 0;
 
-                    // 更新进度显示
-                    $('#processing-time').text(elapsedTime);
+                    // 不需要在这里更新进度显示，因为timerInterval已经在更新
+                    // $('#processing-time').text(elapsedTime);
 
                     // 根据任务状态处理
                     if (response.status === 'completed') {
