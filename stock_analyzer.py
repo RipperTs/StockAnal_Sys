@@ -289,25 +289,25 @@ class StockAnalyzer:
             prev_days = min(30, len(df) - 1)  # Get the most recent 30 days or all available data
 
             # Time-Space Resonance Framework - Dimension 1: Multi-timeframe Analysis
-            # Base weights configuration
+            # Base weights configuration - 优化权重分配，更加平衡
             weights = {
-                'trend': 0.30,  # Trend factor weight (daily timeframe)
-                'volatility': 0.15,  # Volatility factor weight
-                'technical': 0.25,  # Technical indicator factor weight
-                'volume': 0.20,  # Volume factor weight (energy conservation dimension)
-                'momentum': 0.10  # Momentum factor weight (weekly timeframe)
+                'trend': 0.25,  # 降低趋势权重，避免过度依赖短期趋势
+                'volatility': 0.15,  # 保持不变
+                'technical': 0.30,  # 增加技术指标权重，更全面评估
+                'volume': 0.15,  # 降低成交量权重，减少对异常成交量的敏感度
+                'momentum': 0.15  # 增加动量权重，更好地捕捉中期趋势
             }
 
             # Adjust weights based on market type (Dimension 1: Timeframe Nesting)
             if market_type == 'US':
                 # US stocks prioritize long-term trends
-                weights['trend'] = 0.35
+                weights['trend'] = 0.30
                 weights['volatility'] = 0.10
-                weights['momentum'] = 0.15
+                weights['momentum'] = 0.20
             elif market_type == 'HK':
                 # HK stocks adjust for volatility and volume
                 weights['volatility'] = 0.20
-                weights['volume'] = 0.25
+                weights['volume'] = 0.20
 
             # 1. Trend Score (30 points max) - Daily timeframe analysis
             trend_score = 0
@@ -318,18 +318,28 @@ class StockAnalyzer:
                 trend_score += 15
             elif latest['MA5'] > latest['MA20']:
                 # Short-term uptrend (dimension 1: 5-min pattern)
-                trend_score += 10
+                trend_score += 8  # 降低短期趋势的权重
             elif latest['MA20'] > latest['MA60']:
                 # Medium-term uptrend
-                trend_score += 5
+                trend_score += 7  # 增加中期趋势的权重
 
-            # Price position evaluation
+            # Price position evaluation - 优化价格位置评估
             if latest['close'] > latest['MA5']:
                 trend_score += 5
             if latest['close'] > latest['MA20']:
                 trend_score += 5
             if latest['close'] > latest['MA60']:
                 trend_score += 5
+            
+            # 新增：价格趋势评估
+            # 计算最近5天的价格变化趋势
+            recent_price_change = (latest['close'] / df.iloc[-6]['close'] - 1) * 100
+            if recent_price_change > 3:  # 5天涨幅超过3%
+                trend_score += 5
+            elif recent_price_change > 0:  # 5天有正涨幅
+                trend_score += 3
+            elif recent_price_change > -3:  # 5天跌幅小于3%
+                trend_score += 1
 
             # Ensure maximum score limit
             trend_score = min(30, trend_score)
@@ -337,25 +347,28 @@ class StockAnalyzer:
             # 2. Volatility Score (15 points max) - Dimension 2: Filtering
             volatility_score = 0
 
-            # Moderate volatility is optimal
+            # Moderate volatility is optimal - 优化波动率评分标准
             volatility = latest['Volatility']
-            if 1.0 <= volatility <= 2.5:
+            if 0.8 <= volatility <= 2.5:  # 扩大最优波动率范围
                 # Optimal volatility, best case
                 volatility_score += 15
             elif 2.5 < volatility <= 4.0:
                 # Higher volatility, second best
                 volatility_score += 10
-            elif volatility < 1.0:
+            elif 0.5 <= volatility < 0.8:  # 更宽容地评估低波动率
+                # Lower volatility, still acceptable
+                volatility_score += 8
+            elif volatility < 0.5:
                 # Too low volatility, lacks energy
                 volatility_score += 5
             else:
                 # Too high volatility, high risk
-                volatility_score += 0
+                volatility_score += 3  # 给高波动率一些基础分
 
-            # 3. Technical Indicator Score (25 points max) - "Peak Detection System"
+            # 3. Technical Indicator Score (30 points max) - "Peak Detection System" - 增加总分上限
             technical_score = 0
 
-            # RSI indicator evaluation (10 points)
+            # RSI indicator evaluation (10 points) - 优化RSI评分标准
             rsi = latest['RSI']
             if 40 <= rsi <= 60:
                 # Neutral zone, stable trend
@@ -363,11 +376,17 @@ class StockAnalyzer:
             elif 30 <= rsi < 40 or 60 < rsi <= 70:
                 # Threshold zone, potential reversal signals
                 technical_score += 10
-            elif rsi < 30:
-                # Oversold zone, potential buying opportunity
+            elif 20 <= rsi < 30:  # 更细致地评估超卖区域
+                # Oversold zone, strong buying opportunity
+                technical_score += 9
+            elif rsi < 20:  # 极度超卖
+                # Extremely oversold, potential strong reversal
                 technical_score += 8
-            elif rsi > 70:
-                # Overbought zone, potential selling risk
+            elif 70 < rsi <= 80:  # 更细致地评估超买区域
+                # Overbought zone, caution needed
+                technical_score += 4
+            elif rsi > 80:  # 极度超买
+                # Extremely overbought, high selling pressure
                 technical_score += 2
 
             # MACD indicator evaluation (10 points) - "Peak Warning Signal"
@@ -377,80 +396,145 @@ class StockAnalyzer:
             elif latest['MACD'] > latest['Signal']:
                 # MACD golden cross
                 technical_score += 8
-            elif latest['MACD'] < latest['Signal'] and latest['MACD_hist'] < 0:
-                # MACD death cross and negative histogram
-                technical_score += 0
+            elif latest['MACD_hist'] > df.iloc[-2]['MACD_hist'] and latest['MACD_hist'] > 0:
+                # MACD histogram increasing and positive, potential uptrend continuation
+                technical_score += 7
             elif latest['MACD_hist'] > df.iloc[-2]['MACD_hist']:
                 # MACD histogram increasing, potential reversal signal
                 technical_score += 5
+            elif latest['MACD'] < latest['Signal'] and latest['MACD_hist'] < 0:
+                # MACD death cross and negative histogram
+                technical_score += 0
+            else:
+                # Other MACD conditions
+                technical_score += 2  # 给其他情况一些基础分
 
-            # Bollinger Band position evaluation (5 points)
+            # Bollinger Band position evaluation (10 points) - 增加布林带评分权重
             bb_position = (latest['close'] - latest['BB_lower']) / (latest['BB_upper'] - latest['BB_lower'])
             if 0.3 <= bb_position <= 0.7:
                 # Price in middle zone of Bollinger Bands, stable trend
-                technical_score += 3
+                technical_score += 6
             elif bb_position < 0.2:
                 # Price near lower band, potential oversold
-                technical_score += 5
+                technical_score += 10
+            elif 0.2 <= bb_position < 0.3:
+                # Price approaching lower band, potential buying opportunity
+                technical_score += 8
+            elif 0.7 < bb_position <= 0.8:
+                # Price approaching upper band, potential selling opportunity
+                technical_score += 4
             elif bb_position > 0.8:
                 # Price near upper band, potential overbought
-                technical_score += 1
+                technical_score += 2
 
             # Ensure maximum score limit
-            technical_score = min(25, technical_score)
+            technical_score = min(30, technical_score)
 
-            # 4. Volume Score (20 points max) - "Energy Conservation Dimension"
+            # 4. Volume Score (15 points max) - "Energy Conservation Dimension" - 降低总分上限
             volume_score = 0
 
-            # Volume trend analysis
+            # Volume trend analysis - 优化成交量评分标准
             recent_vol_ratio = [df.iloc[-i]['Volume_Ratio'] for i in range(1, min(6, len(df)))]
             avg_vol_ratio = sum(recent_vol_ratio) / len(recent_vol_ratio)
 
             if avg_vol_ratio > 1.5 and latest['close'] > df.iloc[-2]['close']:
                 # Volume surge with price increase - "volume energy threshold breakthrough"
-                volume_score += 20
+                volume_score += 15
             elif avg_vol_ratio > 1.2 and latest['close'] > df.iloc[-2]['close']:
                 # Volume and price rising together
-                volume_score += 15
+                volume_score += 12
+            elif 0.8 <= avg_vol_ratio <= 1.2:
+                # Normal volume, stable market
+                volume_score += 8
             elif avg_vol_ratio < 0.8 and latest['close'] < df.iloc[-2]['close']:
                 # Decreasing volume with price decrease, potentially healthy correction
-                volume_score += 10
+                volume_score += 6
             elif avg_vol_ratio > 1.2 and latest['close'] < df.iloc[-2]['close']:
                 # Volume increasing with price decrease, potentially heavy selling pressure
-                volume_score += 0
+                volume_score += 3
             else:
                 # Other situations
-                volume_score += 8
+                volume_score += 5
 
-            # 5. Momentum Score (10 points max) - Dimension 1: Weekly timeframe
+            # 5. Momentum Score (15 points max) - Dimension 1: Weekly timeframe - 增加总分上限
             momentum_score = 0
 
-            # ROC momentum indicator
+            # ROC momentum indicator - 优化ROC评分标准
             roc = latest['ROC']
             if roc > 5:
                 # Strong upward momentum
-                momentum_score += 10
+                momentum_score += 15
             elif 2 <= roc <= 5:
                 # Moderate upward momentum
-                momentum_score += 8
+                momentum_score += 12
             elif 0 <= roc < 2:
                 # Weak upward momentum
-                momentum_score += 5
+                momentum_score += 8
             elif -2 <= roc < 0:
                 # Weak downward momentum
+                momentum_score += 5
+            elif -5 <= roc < -2:
+                # Moderate downward momentum
                 momentum_score += 3
             else:
                 # Strong downward momentum
-                momentum_score += 0
+                momentum_score += 1  # 给强下行动量一些基础分
+
+            # 新增：价格动量评估
+            # 计算最近10天与20天的价格变化对比
+            price_momentum_10d = (latest['close'] / df.iloc[-11]['close'] - 1) * 100
+            price_momentum_20d = (latest['close'] / df.iloc[-21]['close'] - 1) * 100
+            
+            # 短期动量强于长期动量，表明加速上涨
+            if price_momentum_10d > price_momentum_20d and price_momentum_10d > 0:
+                momentum_score = min(15, momentum_score + 3)
 
             # Calculate total score based on weighted factors - "Resonance Formula"
+            # 使用新的权重计算总分
             final_score = (
-                    trend_score * weights['trend'] / 0.30 +
+                    trend_score * weights['trend'] / 0.25 +
                     volatility_score * weights['volatility'] / 0.15 +
-                    technical_score * weights['technical'] / 0.25 +
-                    volume_score * weights['volume'] / 0.20 +
-                    momentum_score * weights['momentum'] / 0.10
+                    technical_score * weights['technical'] / 0.30 +
+                    volume_score * weights['volume'] / 0.15 +
+                    momentum_score * weights['momentum'] / 0.15
             )
+
+            # 市场环境调整因子 - 新增
+            # 考虑整体市场环境，避免在牛市中过度悲观，熊市中过度乐观
+            try:
+                # 获取大盘指数数据作为参考
+                if market_type == 'A':
+                    index_code = '000001'  # 上证指数
+                elif market_type == 'HK':
+                    index_code = 'HSI'  # 恒生指数
+                elif market_type == 'US':
+                    index_code = 'SPX'  # 标普500
+                else:
+                    index_code = None
+                
+                if index_code:
+                    # 尝试获取指数数据，如果失败则跳过这一步
+                    try:
+                        index_df = self.get_stock_data(index_code, market_type)
+                        if len(index_df) > 20:  # 确保有足够的数据
+                            # 计算指数20日涨跌幅
+                            index_change = (index_df.iloc[-1]['close'] / index_df.iloc[-21]['close'] - 1) * 100
+                            
+                            # 根据大盘走势调整评分
+                            if index_change > 5:  # 大盘强势上涨
+                                final_score += 5
+                            elif index_change > 2:  # 大盘温和上涨
+                                final_score += 3
+                            elif index_change < -5:  # 大盘大幅下跌
+                                final_score -= 3  # 减少负面调整幅度
+                            elif index_change < -2:  # 大盘温和下跌
+                                final_score -= 1  # 减少负面调整幅度
+                    except:
+                        # 如果获取指数数据失败，忽略这一步
+                        pass
+            except:
+                # 如果整个市场环境调整失败，忽略这一步
+                pass
 
             # Special market adjustments - "Market Adaptation Mechanism"
             if market_type == 'US':
@@ -459,7 +543,7 @@ class StockAnalyzer:
                 is_earnings_season = self._is_earnings_season()
                 if is_earnings_season:
                     # Earnings season has higher volatility, adjust score certainty
-                    final_score = 0.9 * final_score + 5  # Slight regression to the mean
+                    final_score = 0.95 * final_score + 3  # 减少回归均值的程度
 
             elif market_type == 'HK':
                 # HK stocks special adjustment
@@ -469,9 +553,9 @@ class StockAnalyzer:
                     # Adjust based on mainland market sentiment
                     mainland_sentiment = self._get_mainland_market_sentiment()
                     if mainland_sentiment > 0:
-                        final_score += 5
+                        final_score += 3  # 减少正面调整幅度
                     else:
-                        final_score -= 5
+                        final_score -= 2  # 减少负面调整幅度
 
             # Ensure score remains within 0-100 range
             final_score = max(0, min(100, round(final_score)))
@@ -544,28 +628,28 @@ class StockAnalyzer:
         Enhanced with Time-Space Resonance Trading System strategies
         """
         try:
-            # 1. Base recommendation logic - Dynamic threshold adjustment based on score
-            if score >= 85:
+            # 1. Base recommendation logic - 优化阈值，使评分更加平衡
+            if score >= 80:  # 降低强烈买入阈值
                 base_recommendation = '强烈建议买入'
                 confidence = 'high'
                 action = 'strong_buy'
-            elif score >= 70:
+            elif score >= 65:  # 降低买入阈值
                 base_recommendation = '建议买入'
                 confidence = 'medium_high'
                 action = 'buy'
-            elif score >= 55:
+            elif score >= 50:  # 降低谨慎买入阈值
                 base_recommendation = '谨慎买入'
                 confidence = 'medium'
                 action = 'cautious_buy'
-            elif score >= 45:
+            elif score >= 40:  # 调整观望阈值
                 base_recommendation = '持观望态度'
                 confidence = 'medium'
                 action = 'hold'
-            elif score >= 30:
+            elif score >= 25:  # 调整谨慎持有阈值
                 base_recommendation = '谨慎持有'
                 confidence = 'medium'
                 action = 'cautious_hold'
-            elif score >= 15:
+            elif score >= 10:  # 调整减仓阈值
                 base_recommendation = '建议减仓'
                 confidence = 'medium_high'
                 action = 'reduce'
@@ -592,13 +676,17 @@ class StockAnalyzer:
                     market_adjustment = "（受大陆市场情绪影响，建议控制风险）"
 
             elif market_type == 'A':
-                # A-share specific adjustment factors
+                # A-share specific adjustment factors - 优化A股特有调整因素
                 if technical_data and 'Volatility' in technical_data:
                     vol = technical_data.get('Volatility', 0)
                     if vol > 4.0 and (action == 'buy' or action == 'strong_buy'):
                         action = 'cautious_buy'
                         confidence = 'medium'
                         market_adjustment = "（市场波动较大，建议分批买入）"
+                    elif vol < 0.5 and (action == 'sell' or action == 'reduce'):
+                        # 波动率过低时，可能是交投清淡，不宜过度悲观
+                        action = 'cautious_hold'
+                        market_adjustment = "（市场波动较小，可能是交投清淡，建议耐心等待）"
 
             # 3. Consider market sentiment (Dimension 2: Filtering)
             sentiment_adjustment = ""
@@ -608,7 +696,10 @@ class StockAnalyzer:
                 if sentiment == 'bullish' and action in ['hold', 'cautious_hold']:
                     action = 'cautious_buy'
                     sentiment_adjustment = "（市场氛围积极，可适当提高仓位）"
-
+                elif sentiment == 'bullish' and action in ['reduce', 'sell']:
+                    # 市场氛围积极时，减少卖出倾向
+                    action = 'cautious_hold'
+                    sentiment_adjustment = "（市场氛围积极，建议再观察）"
                 elif sentiment == 'bearish' and action in ['buy', 'cautious_buy']:
                     action = 'hold'
                     sentiment_adjustment = "（市场氛围悲观，建议等待更好买点）"
@@ -618,24 +709,43 @@ class StockAnalyzer:
             if technical_data:
                 rsi = technical_data.get('RSI', 50)
                 macd_signal = technical_data.get('MACD_signal', 'neutral')
+                price_trend = technical_data.get('price_trend', 0)
 
-                # RSI overbought/oversold adjustment
-                if rsi > 80 and action in ['buy', 'strong_buy']:
+                # RSI overbought/oversold adjustment - 优化RSI调整逻辑
+                if rsi > 75 and action in ['buy', 'strong_buy']:  # 降低超买阈值
                     action = 'hold'
                     technical_adjustment = "（RSI指标显示超买，建议等待回调）"
-                elif rsi < 20 and action in ['sell', 'reduce']:
+                elif rsi < 25 and action in ['sell', 'reduce']:  # 提高超卖阈值
                     action = 'hold'
                     technical_adjustment = "（RSI指标显示超卖，可能存在反弹机会）"
+                elif rsi < 30 and action == 'cautious_hold':  # 超卖区域时，谨慎持有可升级为谨慎买入
+                    action = 'cautious_buy'
+                    technical_adjustment = "（RSI指标接近超卖，可考虑低吸）"
 
-                # MACD signal adjustment
+                # MACD signal adjustment - 优化MACD调整逻辑
                 if macd_signal == 'bullish' and action in ['hold', 'cautious_hold']:
                     action = 'cautious_buy'
                     if not technical_adjustment:
                         technical_adjustment = "（MACD显示买入信号）"
+                elif macd_signal == 'bullish' and action in ['reduce']:
+                    # MACD看涨时，减少卖出倾向
+                    action = 'hold'
+                    if not technical_adjustment:
+                        technical_adjustment = "（MACD显示买入信号，建议暂缓减仓）"
                 elif macd_signal == 'bearish' and action in ['cautious_buy', 'buy']:
                     action = 'hold'
                     if not technical_adjustment:
                         technical_adjustment = "（MACD显示卖出信号）"
+                
+                # 新增：价格趋势调整
+                if price_trend > 3 and action in ['hold', 'cautious_hold']:  # 价格强势上涨
+                    action = 'cautious_buy'
+                    if not technical_adjustment:
+                        technical_adjustment = "（价格呈现强势上涨趋势）"
+                elif price_trend < -3 and action not in ['sell', 'reduce']:  # 价格强势下跌
+                    action = 'cautious_hold'
+                    if not technical_adjustment:
+                        technical_adjustment = "（价格呈现下跌趋势，建议观望）"
 
             # 5. Convert adjusted action to final recommendation
             action_to_recommendation = {
@@ -883,217 +993,6 @@ class StockAnalyzer:
                 'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
             }
 
-    # def get_recommendation(self, score, market_type='A', technical_data=None, news_data=None):
-    #     """
-    #     根据得分和附加信息给出平滑的投资建议
-    #
-    #     参数:
-    #         score: 股票综合评分 (0-100)
-    #         market_type: 市场类型 (A/HK/US)
-    #         technical_data: 技术指标数据 (可选)
-    #         news_data: 新闻和市场情绪数据 (可选)
-    #
-    #     返回:
-    #         投资建议字符串
-    #     """
-    #     try:
-    #         # 1. 基础建议逻辑 - 基于分数的平滑建议
-    #         if score >= 85:
-    #             base_recommendation = '强烈建议买入'
-    #             confidence = 'high'
-    #             action = 'strong_buy'
-    #         elif score >= 70:
-    #             base_recommendation = '建议买入'
-    #             confidence = 'medium_high'
-    #             action = 'buy'
-    #         elif score >= 55:
-    #             base_recommendation = '谨慎买入'
-    #             confidence = 'medium'
-    #             action = 'cautious_buy'
-    #         elif score >= 45:
-    #             base_recommendation = '持观望态度'
-    #             confidence = 'medium'
-    #             action = 'hold'
-    #         elif score >= 30:
-    #             base_recommendation = '谨慎持有'
-    #             confidence = 'medium'
-    #             action = 'cautious_hold'
-    #         elif score >= 15:
-    #             base_recommendation = '建议减仓'
-    #             confidence = 'medium_high'
-    #             action = 'reduce'
-    #         else:
-    #             base_recommendation = '建议卖出'
-    #             confidence = 'high'
-    #             action = 'sell'
-    #
-    #         # 2. 考虑市场特性
-    #         market_adjustment = ""
-    #         if market_type == 'US':
-    #             # 美股调整因素
-    #             if self._is_earnings_season():
-    #                 if confidence == 'high' or confidence == 'medium_high':
-    #                     confidence = 'medium'
-    #                     market_adjustment = "（财报季临近，波动可能加大，建议适当控制仓位）"
-    #
-    #         elif market_type == 'HK':
-    #             # 港股调整因素
-    #             mainland_sentiment = self._get_mainland_market_sentiment()
-    #             if mainland_sentiment < -0.3 and (action == 'buy' or action == 'strong_buy'):
-    #                 action = 'cautious_buy'
-    #                 confidence = 'medium'
-    #                 market_adjustment = "（受大陆市场情绪影响，建议控制风险）"
-    #
-    #         elif market_type == 'A':
-    #             # A股特有调整因素
-    #             if technical_data and 'Volatility' in technical_data:
-    #                 vol = technical_data.get('Volatility', 0)
-    #                 if vol > 4.0 and (action == 'buy' or action == 'strong_buy'):
-    #                     action = 'cautious_buy'
-    #                     confidence = 'medium'
-    #                     market_adjustment = "（市场波动较大，建议分批买入）"
-    #
-    #         # 3. 考虑市场情绪
-    #         sentiment_adjustment = ""
-    #         if news_data and 'market_sentiment' in news_data:
-    #             sentiment = news_data.get('market_sentiment', 'neutral')
-    #
-    #             if sentiment == 'bullish' and action in ['hold', 'cautious_hold']:
-    #                 action = 'cautious_buy'
-    #                 sentiment_adjustment = "（市场氛围积极，可适当提高仓位）"
-    #
-    #             elif sentiment == 'bearish' and action in ['buy', 'cautious_buy']:
-    #                 action = 'hold'
-    #                 sentiment_adjustment = "（市场氛围悲观，建议等待更好买点）"
-    #
-    #         # 4. 技术指标微调
-    #         technical_adjustment = ""
-    #         if technical_data:
-    #             rsi = technical_data.get('RSI', 50)
-    #             macd_signal = technical_data.get('MACD_signal', 'neutral')
-    #
-    #             # RSI超买超卖调整
-    #             if rsi > 80 and action in ['buy', 'strong_buy']:
-    #                 action = 'hold'
-    #                 technical_adjustment = "（RSI指标显示超买，建议等待回调）"
-    #             elif rsi < 20 and action in ['sell', 'reduce']:
-    #                 action = 'hold'
-    #                 technical_adjustment = "（RSI指标显示超卖，可能存在反弹机会）"
-    #
-    #             # MACD信号调整
-    #             if macd_signal == 'bullish' and action in ['hold', 'cautious_hold']:
-    #                 action = 'cautious_buy'
-    #                 if not technical_adjustment:
-    #                     technical_adjustment = "（MACD显示买入信号）"
-    #             elif macd_signal == 'bearish' and action in ['cautious_buy', 'buy']:
-    #                 action = 'hold'
-    #                 if not technical_adjustment:
-    #                     technical_adjustment = "（MACD显示卖出信号）"
-    #
-    #         # 5. 根据调整后的action转换为最终建议
-    #         action_to_recommendation = {
-    #             'strong_buy': '强烈建议买入',
-    #             'buy': '建议买入',
-    #             'cautious_buy': '谨慎买入',
-    #             'hold': '持观望态度',
-    #             'cautious_hold': '谨慎持有',
-    #             'reduce': '建议减仓',
-    #             'sell': '建议卖出'
-    #         }
-    #
-    #         final_recommendation = action_to_recommendation.get(action, base_recommendation)
-    #
-    #         # 6. 组合所有调整因素
-    #         adjustments = " ".join(filter(None, [market_adjustment, sentiment_adjustment, technical_adjustment]))
-    #
-    #         if adjustments:
-    #             return f"{final_recommendation} {adjustments}"
-    #         else:
-    #             return final_recommendation
-    #
-    #     except Exception as e:
-    #         self.logger.error(f"生成投资建议时出错: {str(e)}")
-    #         # 出错时返回安全的默认建议
-    #         return "无法提供明确建议，请结合多种因素谨慎决策"
-
-    # 原有API：使用 OpenAI 替代 Gemini
-    # def get_ai_analysis(self, df, stock_code):
-    #     """使用AI进行分析"""
-    #     try:
-    #         import openai
-    #         import threading
-    #         import queue
-
-    #         # 设置API密钥和基础URL
-    #         openai.api_key = self.openai_api_key
-    #         openai.api_base = self.openai_api_url
-
-    #         recent_data = df.tail(14).to_dict('records')
-    #         technical_summary = {
-    #             'trend': 'upward' if df.iloc[-1]['MA5'] > df.iloc[-1]['MA20'] else 'downward',
-    #             'volatility': f"{df.iloc[-1]['Volatility']:.2f}%",
-    #             'volume_trend': 'increasing' if df.iloc[-1]['Volume_Ratio'] > 1 else 'decreasing',
-    #             'rsi_level': df.iloc[-1]['RSI']
-    #         }
-
-    #         prompt = f"""分析股票{stock_code}：
-    # 技术指标概要：{technical_summary}
-    # 近14日交易数据：{recent_data}
-
-    # 请提供：
-    # 1.趋势分析（包含支撑位和压力位）
-    # 2.成交量分析及其含义
-    # 3.风险评估（包含波动率分析）
-    # 4.短期和中期目标价位
-    # 5.关键技术位分析
-    # 6.具体交易建议（包含止损位）
-
-    # 请基于技术指标和市场动态进行分析,给出具体数据支持。"""
-
-    #         messages = [{"role": "user", "content": prompt}]
-
-    #         # 使用线程和队列添加超时控制
-    #         result_queue = queue.Queue()
-
-    #         def call_api():
-    #             try:
-    #                 response = openai.ChatCompletion.create(
-    #                     model=self.openai_model,
-    #                     messages=messages,
-    #                     temperature=1,
-    #                     max_tokens=4000,
-    #                     stream = False
-    #                 )
-    #                 result_queue.put(response)
-    #             except Exception as e:
-    #                 result_queue.put(e)
-
-    #         # 启动API调用线程
-    #         api_thread = threading.Thread(target=call_api)
-    #         api_thread.daemon = True
-    #         api_thread.start()
-
-    #         # 等待结果，最多等待20秒
-    #         try:
-    #             result = result_queue.get(timeout=20)
-
-    #             # 检查结果是否为异常
-    #             if isinstance(result, Exception):
-    #                 raise result
-
-    #             # 提取助理回复
-    #             assistant_reply = result["choices"][0]["message"]["content"].strip()
-    #             return assistant_reply
-
-    #         except queue.Empty:
-    #             return "AI分析超时，无法获取分析结果。请稍后再试。"
-    #         except Exception as e:
-    #             return f"AI分析过程中发生错误: {str(e)}"
-
-    #     except Exception as e:
-    #         self.logger.error(f"AI分析发生错误: {str(e)}")
-    #         return "AI分析过程中发生错误，请稍后再试"
-
     def get_ai_analysis(self, df, stock_code, market_type='A'):
         """
         使用AI进行增强分析
@@ -1300,143 +1199,136 @@ class StockAnalyzer:
 
         return formatted
 
-    # 原有API：保持接口不变
     def analyze_stock(self, stock_code, market_type='A'):
         """分析单个股票"""
         try:
-            # self.clear_cache(stock_code, market_type)
             # 获取股票数据
             df = self.get_stock_data(stock_code, market_type)
-            self.logger.info(f"获取股票数据完成")
+            
             # 计算技术指标
             df = self.calculate_indicators(df)
-            self.logger.info(f"计算技术指标完成")
-            # 评分系统
-            score = self.calculate_score(df)
-            self.logger.info(f"评分系统完成")
+            
+            # 计算评分
+            score = self.calculate_score(df, market_type)
+            
             # 获取最新数据
             latest = df.iloc[-1]
-            prev = df.iloc[-2]
-
-            # 获取基本信息
-            stock_info = self.get_stock_info(stock_code)
-            stock_name = stock_info.get('股票名称', '未知')
-            industry = stock_info.get('行业', '未知')
-
-            # 生成报告（保持原有格式）
+            
+            # 计算价格趋势 - 新增
+            recent_price_change = (latest['close'] / df.iloc[-6]['close'] - 1) * 100 if len(df) >= 6 else 0
+            
+            # 准备技术数据
+            technical_data = {
+                'RSI': latest['RSI'],
+                'MACD_signal': 'bullish' if latest['MACD'] > latest['Signal'] else 'bearish',
+                'Volatility': latest['Volatility'],
+                'BB_position': (latest['close'] - latest['BB_lower']) / (latest['BB_upper'] - latest['BB_lower']),
+                'price_trend': recent_price_change  # 新增价格趋势数据
+            }
+            
+            # 获取新闻数据
+            news_data = None
+            try:
+                news = self.get_stock_news(stock_code, market_type)
+                if news:
+                    # 简单情感分析
+                    sentiment_score = sum([n.get('sentiment', 0) for n in news]) / len(news)
+                    news_data = {
+                        'news': news,
+                        'market_sentiment': 'bullish' if sentiment_score > 0.3 else 
+                                           'bearish' if sentiment_score < -0.3 else 'neutral'
+                    }
+            except:
+                pass
+            
+            # 获取投资建议
+            recommendation = self.get_recommendation(score, market_type, technical_data, news_data)
+            
+            # 识别支撑位和阻力位
+            support_resistance = self.identify_support_resistance(df)
+            
+            # 获取AI分析
+            ai_analysis = None
+            try:
+                ai_analysis = self.get_ai_analysis(df, stock_code, market_type)
+            except Exception as e:
+                self.logger.error(f"获取AI分析时出错: {str(e)}")
+                ai_analysis = "无法获取AI分析"
+            
+            # 构建分析报告
             report = {
                 'stock_code': stock_code,
-                'stock_name': stock_name,
-                'industry': industry,
-                'analysis_date': datetime.now().strftime('%Y-%m-%d'),
+                'analysis_date': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                'price': float(latest['close']),
                 'score': score,
-                'price': latest['close'],
-                'price_change': (latest['close'] - prev['close']) / prev['close'] * 100,
-                'ma_trend': 'UP' if latest['MA5'] > latest['MA20'] else 'DOWN',
-                'rsi': latest['RSI'],
-                'macd_signal': 'BUY' if latest['MACD'] > latest['Signal'] else 'SELL',
-                'volume_status': '放量' if latest['Volume_Ratio'] > 1.5 else '平量',
-                'recommendation': self.get_recommendation(score),
-                'ai_analysis': self.get_ai_analysis(df, stock_code)
+                'score_details': self.score_details,
+                'recommendation': recommendation,
+                'technical_indicators': {
+                    'MA5': float(latest['MA5']),
+                    'MA20': float(latest['MA20']),
+                    'MA60': float(latest['MA60']),
+                    'RSI': float(latest['RSI']),
+                    'MACD': float(latest['MACD']),
+                    'Signal': float(latest['Signal']),
+                    'MACD_hist': float(latest['MACD_hist']),
+                    'Volatility': float(latest['Volatility']),
+                    'Volume_Ratio': float(latest['Volume_Ratio']),
+                    'BB_upper': float(latest['BB_upper']),
+                    'BB_middle': float(latest['BB_middle']),
+                    'BB_lower': float(latest['BB_lower'])
+                },
+                'support_resistance': support_resistance,
+                'ai_analysis': ai_analysis
             }
-
+            
+            # 验证并修复报告中的无效值
+            report = self._validate_and_fix_report(report)
+            
             return report
-
+            
         except Exception as e:
-            self.logger.error(f"分析股票时出错: {str(e)}")
+            self.logger.error(f"分析股票 {stock_code} 时出错: {str(e)}")
             raise
 
-    # 原有API：保持接口不变
     def scan_market(self, stock_list, min_score=60, market_type='A'):
         """扫描市场，寻找符合条件的股票"""
-        recommendations = []
-        total_stocks = len(stock_list)
-
-        self.logger.info(f"开始市场扫描，共 {total_stocks} 只股票")
-        start_time = time.time()
-        processed = 0
-
-        # 批量处理，减少日志输出
-        batch_size = 10
-        for i in range(0, total_stocks, batch_size):
-            batch = stock_list[i:i + batch_size]
-            batch_results = []
-
-            for stock_code in batch:
+        try:
+            results = []
+            recommendations = []
+            
+            # 调整最低评分阈值，使其与新的评分系统匹配
+            adjusted_min_score = min_score
+            if min_score > 80:  # 如果用户设置了很高的阈值，适当调整
+                adjusted_min_score = 75
+            
+            for stock_code in stock_list:
                 try:
-                    # 使用简化版分析以加快速度
+                    # 快速分析股票
                     report = self.quick_analyze_stock(stock_code, market_type)
-                    if report['score'] >= min_score:
-                        batch_results.append(report)
+                    
+                    # 检查评分是否达到最低要求
+                    if report['score'] >= adjusted_min_score:
+                        results.append(report)
+                        
+                        # 添加到推荐列表
+                        recommendations.append({
+                            'stock_code': stock_code,
+                            'stock_name': report.get('stock_name', '未知'),
+                            'score': report['score'],
+                            'price': report['price'],
+                            'recommendation': report['recommendation']
+                        })
                 except Exception as e:
-                    self.logger.error(f"分析股票 {stock_code} 时出错: {str(e)}")
+                    self.logger.error(f"扫描股票 {stock_code} 时出错: {str(e)}")
                     continue
-
-            # 添加批处理结果
-            recommendations.extend(batch_results)
-
-            # 更新处理进度
-            processed += len(batch)
-            elapsed = time.time() - start_time
-            remaining = (elapsed / processed) * (total_stocks - processed) if processed > 0 else 0
-
-            self.logger.info(
-                f"已处理 {processed}/{total_stocks} 只股票，耗时 {elapsed:.1f}秒，预计剩余 {remaining:.1f}秒")
-
-        # 按得分排序
-        recommendations.sort(key=lambda x: x['score'], reverse=True)
-
-        total_time = time.time() - start_time
-        self.logger.info(
-            f"市场扫描完成，共分析 {total_stocks} 只股票，找到 {len(recommendations)} 只符合条件的股票，总耗时 {total_time:.1f}秒")
-
-        return recommendations
-
-    # def quick_analyze_stock(self, stock_code, market_type='A'):
-    #     """快速分析股票，用于市场扫描"""
-    #     try:
-    #         # 获取股票数据
-    #         df = self.get_stock_data(stock_code, market_type)
-
-    #         # 计算技术指标
-    #         df = self.calculate_indicators(df)
-
-    #         # 简化评分计算
-    #         score = self.calculate_score(df)
-
-    #         # 获取最新数据
-    #         latest = df.iloc[-1]
-    #         prev = df.iloc[-2] if len(df) > 1 else latest
-
-    #         # 尝试获取股票名称和行业
-    #         try:
-    #             stock_info = self.get_stock_info(stock_code)
-    #             stock_name = stock_info.get('股票名称', '未知')
-    #             industry = stock_info.get('行业', '未知')
-    #         except:
-    #             stock_name = '未知'
-    #             industry = '未知'
-
-    #         # 生成简化报告
-    #         report = {
-    #             'stock_code': stock_code,
-    #             'stock_name': stock_name,
-    #             'industry': industry,
-    #             'analysis_date': datetime.now().strftime('%Y-%m-%d'),
-    #             'score': score,
-    #             'price': float(latest['close']),
-    #             'price_change': float((latest['close'] - prev['close']) / prev['close'] * 100),
-    #             'ma_trend': 'UP' if latest['MA5'] > latest['MA20'] else 'DOWN',
-    #             'rsi': float(latest['RSI']),
-    #             'macd_signal': 'BUY' if latest['MACD'] > latest['Signal'] else 'SELL',
-    #             'volume_status': '放量' if latest['Volume_Ratio'] > 1.5 else '平量',
-    #             'recommendation': self.get_recommendation(score)
-    #         }
-
-    #         return report
-    #     except Exception as e:
-    #         self.logger.error(f"快速分析股票 {stock_code} 时出错: {str(e)}")
-    #         raise
+            
+            # 按评分排序
+            recommendations = sorted(recommendations, key=lambda x: x['score'], reverse=True)
+            
+            return recommendations
+        except Exception as e:
+            self.logger.error(f"市场扫描时出错: {str(e)}")
+            raise
 
     def quick_analyze_stock(self, stock_code, market_type='A'):
         """快速分析股票，用于市场扫描"""
@@ -1447,25 +1339,35 @@ class StockAnalyzer:
             # 计算技术指标
             df = self.calculate_indicators(df)
 
-            # 简化评分计算
-            score = self.calculate_score(df)
+            # 计算评分
+            score = self.calculate_score(df, market_type)
 
             # 获取最新数据
             latest = df.iloc[-1]
             prev = df.iloc[-2] if len(df) > 1 else latest
+            
+            # 计算价格趋势
+            recent_price_change = (latest['close'] / df.iloc[-6]['close'] - 1) * 100 if len(df) >= 6 else 0
 
-            # 先获取股票信息再生成报告
+            # 准备技术数据
+            technical_data = {
+                'RSI': latest['RSI'],
+                'MACD_signal': 'bullish' if latest['MACD'] > latest['Signal'] else 'bearish',
+                'Volatility': latest['Volatility'],
+                'price_trend': recent_price_change
+            }
+
+            # 尝试获取股票名称和行业
             try:
                 stock_info = self.get_stock_info(stock_code)
                 stock_name = stock_info.get('股票名称', '未知')
                 industry = stock_info.get('行业', '未知')
-
-                # 添加日志
-                self.logger.info(f"股票 {stock_code} 信息: 名称={stock_name}, 行业={industry}")
-            except Exception as e:
-                self.logger.error(f"获取股票 {stock_code} 信息时出错: {str(e)}")
+            except:
                 stock_name = '未知'
                 industry = '未知'
+
+            # 获取投资建议
+            recommendation = self.get_recommendation(score, market_type, technical_data)
 
             # 生成简化报告
             report = {
@@ -1479,16 +1381,14 @@ class StockAnalyzer:
                 'ma_trend': 'UP' if latest['MA5'] > latest['MA20'] else 'DOWN',
                 'rsi': float(latest['RSI']),
                 'macd_signal': 'BUY' if latest['MACD'] > latest['Signal'] else 'SELL',
-                'volume_status': 'HIGH' if latest['Volume_Ratio'] > 1.5 else 'NORMAL',
-                'recommendation': self.get_recommendation(score)
+                'volume_status': '放量' if latest['Volume_Ratio'] > 1.5 else '平量',
+                'recommendation': recommendation
             }
 
             return report
         except Exception as e:
             self.logger.error(f"快速分析股票 {stock_code} 时出错: {str(e)}")
             raise
-
-    # ======================== 新增功能 ========================#
 
     def get_stock_info(self, stock_code):
         """获取股票基本信息"""
