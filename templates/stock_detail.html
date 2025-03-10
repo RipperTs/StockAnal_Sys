@@ -6,6 +6,12 @@
 <div class="container-fluid py-1" style="padding-top: 0.2rem !important; padding-bottom: 0.2rem !important;">
 
     <div id="alerts-container"></div>
+    
+    <!-- 市场状态提示 -->
+    <div id="market-status-alert" class="alert alert-warning alert-dismissible fade show mb-2" role="alert" style="display: none;">
+        <i class="fas fa-clock me-2"></i><span id="market-status-message"></span>
+        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+    </div>
 
     <!-- 调整布局: 减少垂直方向上的间距 -->
     <div class="d-flex justify-content-between align-items-center mb-1" style="margin-top: 0.2rem; margin-bottom: 0.2rem;">
@@ -193,6 +199,9 @@
     let analysisResult = null;
 
     $(document).ready(function() {
+        // 检查市场状态
+        checkMarketStatus();
+        
         // 初始加载
         loadStockData();
 
@@ -201,11 +210,13 @@
             marketType = $('#market-type').val();
             period = $('#analysis-period').val();
             loadStockData();
+            checkMarketStatus(); // 刷新时重新检查市场状态
         });
 
         // 市场类型改变事件
         $('#market-type').change(function() {
             marketType = $(this).val();
+            checkMarketStatus(); // 市场类型改变时重新检查市场状态
         });
 
         // 分析周期改变事件
@@ -213,6 +224,92 @@
             period = $(this).val();
         });
     });
+
+    // 检查市场状态
+    function checkMarketStatus() {
+        const now = new Date();
+        const day = now.getDay(); // 0 是周日，6 是周六
+        const hours = now.getHours();
+        const minutes = now.getMinutes();
+        const currentTime = hours * 100 + minutes; // 格式化为 HHMM
+        
+        let isMarketOpen = false;
+        let statusMessage = "";
+        
+        // 根据不同市场类型检查交易时间
+        switch(marketType) {
+            case 'A': // A股
+                // 周一至周五，9:30-11:30, 13:00-15:00
+                if (day >= 1 && day <= 5) {
+                    if ((currentTime >= 930 && currentTime <= 1130) || 
+                        (currentTime >= 1300 && currentTime <= 1500)) {
+                        isMarketOpen = true;
+                    } else if (currentTime < 930) {
+                        statusMessage = "A股市场尚未开盘，开盘时间为 9:30";
+                    } else if (currentTime > 1500) {
+                        statusMessage = "A股市场已收盘，收盘时间为 15:00";
+                    } else {
+                        statusMessage = "A股市场午间休市，下午 13:00 开盘";
+                    }
+                } else {
+                    statusMessage = "A股市场周末休市，下周一 9:30 开盘";
+                }
+                break;
+                
+            case 'HK': // 港股
+                // 周一至周五，9:30-12:00, 13:00-16:00
+                if (day >= 1 && day <= 5) {
+                    if ((currentTime >= 930 && currentTime <= 1200) || 
+                        (currentTime >= 1300 && currentTime <= 1600)) {
+                        isMarketOpen = true;
+                    } else if (currentTime < 930) {
+                        statusMessage = "港股市场尚未开盘，开盘时间为 9:30";
+                    } else if (currentTime > 1600) {
+                        statusMessage = "港股市场已收盘，收盘时间为 16:00";
+                    } else {
+                        statusMessage = "港股市场午间休市，下午 13:00 开盘";
+                    }
+                } else {
+                    statusMessage = "港股市场周末休市，下周一 9:30 开盘";
+                }
+                break;
+                
+            case 'US': // 美股
+                // 美东时间周一至周五，9:30-16:00
+                // 转换为北京时间：冬令时 22:30-5:00，夏令时 21:30-4:00
+                // 这里简化处理，使用 22:30-5:00
+                if (day >= 1 && day <= 5) {
+                    // 当天晚上的交易时间
+                    if (currentTime >= 2230 && currentTime <= 2359) {
+                        isMarketOpen = true;
+                    } 
+                    // 次日凌晨的交易时间
+                    else if (day >= 2 && day <= 6 && currentTime >= 0 && currentTime <= 500) {
+                        isMarketOpen = true;
+                    }
+                    // 其他时间段
+                    else if (day === 1 && currentTime < 2230) {
+                        statusMessage = "美股市场尚未开盘，开盘时间为 22:30 (北京时间)";
+                    } else if ((day >= 2 && day <= 5 && currentTime > 500 && currentTime < 2230) || 
+                              (day === 6 && currentTime > 500)) {
+                        statusMessage = "美股市场已收盘，今日开盘时间为 22:30 (北京时间)";
+                    }
+                } else if (day === 0) {
+                    statusMessage = "美股市场周末休市，周一 22:30 (北京时间) 开盘";
+                } else if (day === 6 && currentTime > 500) {
+                    statusMessage = "美股市场周末休市，下周一 22:30 (北京时间) 开盘";
+                }
+                break;
+        }
+        
+        // 显示或隐藏市场状态提示
+        if (!isMarketOpen && statusMessage) {
+            $('#market-status-message').text(statusMessage);
+            $('#market-status-alert').show();
+        } else {
+            $('#market-status-alert').hide();
+        }
+    }
 
     // 加载股票数据
     function loadStockData() {
