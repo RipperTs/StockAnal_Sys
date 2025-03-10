@@ -24,7 +24,7 @@ from flask_caching import Cache
 import threading
 import sys
 from flask_swagger_ui import get_swaggerui_blueprint
-from database import get_session, StockInfo, AnalysisResult, Portfolio, USE_DATABASE
+from database import get_session, AnalysisResult, USE_DATABASE, init_db
 from dotenv import load_dotenv
 from industry_analyzer import IndustryAnalyzer
 
