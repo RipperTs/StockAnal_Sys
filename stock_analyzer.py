@@ -333,13 +333,18 @@ class StockAnalyzer:
             
             # 新增：价格趋势评估
             # 计算最近5天的价格变化趋势
-            recent_price_change = (latest['close'] / df.iloc[-6]['close'] - 1) * 100
-            if recent_price_change > 3:  # 5天涨幅超过3%
-                trend_score += 5
-            elif recent_price_change > 0:  # 5天有正涨幅
-                trend_score += 3
-            elif recent_price_change > -3:  # 5天跌幅小于3%
-                trend_score += 1
+            try:
+                if len(df) >= 6:
+                    recent_price_change = (latest['close'] / df.iloc[-6]['close'] - 1) * 100
+                    if recent_price_change > 3:  # 5天涨幅超过3%
+                        trend_score += 5
+                    elif recent_price_change > 0:  # 5天有正涨幅
+                        trend_score += 3
+                    elif recent_price_change > -3:  # 5天跌幅小于3%
+                        trend_score += 1
+            except Exception as e:
+                self.logger.warning(f"计算价格趋势时出错: {str(e)}")
+                # 出错时不加分
 
             # Ensure maximum score limit
             trend_score = min(30, trend_score)
@@ -482,12 +487,17 @@ class StockAnalyzer:
 
             # 新增：价格动量评估
             # 计算最近10天与20天的价格变化对比
-            price_momentum_10d = (latest['close'] / df.iloc[-11]['close'] - 1) * 100
-            price_momentum_20d = (latest['close'] / df.iloc[-21]['close'] - 1) * 100
-            
-            # 短期动量强于长期动量，表明加速上涨
-            if price_momentum_10d > price_momentum_20d and price_momentum_10d > 0:
-                momentum_score = min(15, momentum_score + 3)
+            try:
+                if len(df) >= 21:  # 确保有足够的数据
+                    price_momentum_10d = (latest['close'] / df.iloc[-11]['close'] - 1) * 100
+                    price_momentum_20d = (latest['close'] / df.iloc[-21]['close'] - 1) * 100
+                    
+                    # 短期动量强于长期动量，表明加速上涨
+                    if price_momentum_10d > price_momentum_20d and price_momentum_10d > 0:
+                        momentum_score = min(15, momentum_score + 3)
+            except Exception as e:
+                self.logger.warning(f"计算价格动量时出错: {str(e)}")
+                # 出错时不加分
 
             # Calculate total score based on weighted factors - "Resonance Formula"
             # 使用新的权重计算总分
@@ -499,42 +509,44 @@ class StockAnalyzer:
                     momentum_score * weights['momentum'] / 0.15
             )
 
-            # 市场环境调整因子 - 新增
-            # 考虑整体市场环境，避免在牛市中过度悲观，熊市中过度乐观
-            try:
-                # 获取大盘指数数据作为参考
-                if market_type == 'A':
-                    index_code = '000001'  # 上证指数
-                elif market_type == 'HK':
-                    index_code = 'HSI'  # 恒生指数
-                elif market_type == 'US':
-                    index_code = 'SPX'  # 标普500
-                else:
-                    index_code = None
-                
-                if index_code:
-                    # 尝试获取指数数据，如果失败则跳过这一步
-                    try:
-                        index_df = self.get_stock_data(index_code, market_type)
-                        if len(index_df) > 20:  # 确保有足够的数据
-                            # 计算指数20日涨跌幅
-                            index_change = (index_df.iloc[-1]['close'] / index_df.iloc[-21]['close'] - 1) * 100
-                            
-                            # 根据大盘走势调整评分
-                            if index_change > 5:  # 大盘强势上涨
-                                final_score += 5
-                            elif index_change > 2:  # 大盘温和上涨
-                                final_score += 3
-                            elif index_change < -5:  # 大盘大幅下跌
-                                final_score -= 3  # 减少负面调整幅度
-                            elif index_change < -2:  # 大盘温和下跌
-                                final_score -= 1  # 减少负面调整幅度
-                    except:
-                        # 如果获取指数数据失败，忽略这一步
-                        pass
-            except:
-                # 如果整个市场环境调整失败，忽略这一步
-                pass
+            # 市场环境调整因子 - 修复获取大盘指数数据的问题
+            market_adjustment = 0  # 默认不调整
+            
+            # 根据市场类型确定指数代码
+            index_code = None
+            if market_type == 'A':
+                # 修改上证指数代码格式，确保与数据源匹配
+                index_code = 'sh000001'  # 修改为正确的上证指数代码格式
+            elif market_type == 'HK':
+                index_code = 'HSI'  # 恒生指数
+            elif market_type == 'US':
+                index_code = 'SPX'  # 标普500
+            
+            # 尝试获取指数数据
+            if index_code:
+                try:
+                    # 使用专门的方法获取指数数据，而不是通用的get_stock_data
+                    index_df = self._get_index_data(index_code, market_type)
+                    
+                    if index_df is not None and len(index_df) > 20:  # 确保有足够的数据
+                        # 计算指数20日涨跌幅
+                        index_change = (index_df.iloc[-1]['close'] / index_df.iloc[-21]['close'] - 1) * 100
+                        
+                        # 根据大盘走势调整评分
+                        if index_change > 5:  # 大盘强势上涨
+                            market_adjustment = 5
+                        elif index_change > 2:  # 大盘温和上涨
+                            market_adjustment = 3
+                        elif index_change < -5:  # 大盘大幅下跌
+                            market_adjustment = -3  # 减少负面调整幅度
+                        elif index_change < -2:  # 大盘温和下跌
+                            market_adjustment = -1  # 减少负面调整幅度
+                except Exception as e:
+                    self.logger.warning(f"获取指数 {index_code} 数据失败: {str(e)}")
+                    # 获取失败时不进行调整
+            
+            # 应用市场环境调整
+            final_score += market_adjustment
 
             # Special market adjustments - "Market Adaptation Mechanism"
             if market_type == 'US':
@@ -576,6 +588,58 @@ class StockAnalyzer:
             self.logger.error(f"Error calculating score: {str(e)}")
             # Return neutral score on error
             return 50
+            
+    def _get_index_data(self, index_code, market_type='A'):
+        """
+        获取指数数据的专用方法
+        
+        参数:
+            index_code: 指数代码
+            market_type: 市场类型(A/HK/US)
+            
+        返回:
+            DataFrame: 指数历史数据，如果获取失败则返回None
+        """
+        try:
+            import akshare as ak
+            
+            # 缓存键
+            cache_key = f"{index_code}_index_data"
+            if cache_key in self.data_cache:
+                return self.data_cache[cache_key]
+            
+            # 根据市场类型获取不同的指数数据
+            if market_type == 'A':
+                # 使用akshare获取A股指数数据
+                df = ak.stock_zh_index_daily(symbol=index_code)
+                # 确保列名标准化
+                if 'close' not in df.columns and '收盘' in df.columns:
+                    df = df.rename(columns={'收盘': 'close'})
+                
+            elif market_type == 'HK':
+                # 获取港股指数数据
+                df = ak.stock_hk_index_daily_em(symbol=index_code)
+                # 确保列名标准化
+                if 'close' not in df.columns and '收盘价' in df.columns:
+                    df = df.rename(columns={'收盘价': 'close'})
+                
+            elif market_type == 'US':
+                # 获取美股指数数据
+                df = ak.index_us_stock_sina(symbol=index_code)
+                # 确保列名标准化
+                if 'close' not in df.columns and '收盘价' in df.columns:
+                    df = df.rename(columns={'收盘价': 'close'})
+            
+            # 缓存数据
+            if df is not None and not df.empty:
+                self.data_cache[cache_key] = df
+                return df
+            else:
+                return None
+                
+        except Exception as e:
+            self.logger.warning(f"获取指数 {index_code} 数据失败: {str(e)}")
+            return None
 
     def calculate_position_size(self, stock_code, risk_percent=2.0, stop_loss_percent=5.0):
         """
@@ -1214,8 +1278,13 @@ class StockAnalyzer:
             # 获取最新数据
             latest = df.iloc[-1]
             
-            # 计算价格趋势 - 新增
-            recent_price_change = (latest['close'] / df.iloc[-6]['close'] - 1) * 100 if len(df) >= 6 else 0
+            # 计算价格趋势 - 添加错误处理
+            recent_price_change = 0
+            try:
+                if len(df) >= 6:
+                    recent_price_change = (latest['close'] / df.iloc[-6]['close'] - 1) * 100
+            except Exception as e:
+                self.logger.warning(f"计算价格趋势时出错: {str(e)}")
             
             # 准备技术数据
             technical_data = {
@@ -1223,14 +1292,14 @@ class StockAnalyzer:
                 'MACD_signal': 'bullish' if latest['MACD'] > latest['Signal'] else 'bearish',
                 'Volatility': latest['Volatility'],
                 'BB_position': (latest['close'] - latest['BB_lower']) / (latest['BB_upper'] - latest['BB_lower']),
-                'price_trend': recent_price_change  # 新增价格趋势数据
+                'price_trend': recent_price_change  # 价格趋势数据
             }
             
             # 获取新闻数据
             news_data = None
             try:
                 news = self.get_stock_news(stock_code, market_type)
-                if news:
+                if news and isinstance(news, list) and len(news) > 0:
                     # 简单情感分析
                     sentiment_score = sum([n.get('sentiment', 0) for n in news]) / len(news)
                     news_data = {
@@ -1238,8 +1307,8 @@ class StockAnalyzer:
                         'market_sentiment': 'bullish' if sentiment_score > 0.3 else 
                                            'bearish' if sentiment_score < -0.3 else 'neutral'
                     }
-            except:
-                pass
+            except Exception as e:
+                self.logger.warning(f"获取新闻数据时出错: {str(e)}")
             
             # 获取投资建议
             recommendation = self.get_recommendation(score, market_type, technical_data, news_data)
@@ -1346,8 +1415,13 @@ class StockAnalyzer:
             latest = df.iloc[-1]
             prev = df.iloc[-2] if len(df) > 1 else latest
             
-            # 计算价格趋势
-            recent_price_change = (latest['close'] / df.iloc[-6]['close'] - 1) * 100 if len(df) >= 6 else 0
+            # 计算价格趋势 - 添加错误处理
+            recent_price_change = 0
+            try:
+                if len(df) >= 6:
+                    recent_price_change = (latest['close'] / df.iloc[-6]['close'] - 1) * 100
+            except Exception as e:
+                self.logger.warning(f"计算价格趋势时出错: {str(e)}")
 
             # 准备技术数据
             technical_data = {
@@ -1362,7 +1436,8 @@ class StockAnalyzer:
                 stock_info = self.get_stock_info(stock_code)
                 stock_name = stock_info.get('股票名称', '未知')
                 industry = stock_info.get('行业', '未知')
-            except:
+            except Exception as e:
+                self.logger.warning(f"获取股票信息时出错: {str(e)}")
                 stock_name = '未知'
                 industry = '未知'
 
