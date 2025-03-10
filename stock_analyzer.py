@@ -280,334 +280,445 @@ class StockAnalyzer:
 
     def calculate_score(self, df, market_type='A'):
         """
-        Calculate stock score - Enhanced with Time-Space Resonance Trading System
-        Adjusts scoring weights and criteria based on different market characteristics
+        计算股票综合评分 - 基于多维度分析框架
+        根据不同市场特性调整评分权重和标准
+        返回0-100的评分，其中:
+        0-20: 强烈卖出信号
+        21-40: 卖出信号
+        41-60: 观望信号
+        61-80: 买入信号
+        81-100: 强烈买入信号
         """
         try:
             score = 0
+            if len(df) < 30:  # 确保有足够的数据进行分析
+                self.logger.warning(f"数据量不足，无法进行可靠评分: {len(df)}行")
+                return 50  # 返回中性评分
+                
             latest = df.iloc[-1]
-            prev_days = min(30, len(df) - 1)  # Get the most recent 30 days or all available data
-
-            # Time-Space Resonance Framework - Dimension 1: Multi-timeframe Analysis
-            # Base weights configuration - 优化权重分配，更加平衡
-            weights = {
-                'trend': 0.25,  # 降低趋势权重，避免过度依赖短期趋势
-                'volatility': 0.15,  # 保持不变
-                'technical': 0.30,  # 增加技术指标权重，更全面评估
-                'volume': 0.15,  # 降低成交量权重，减少对异常成交量的敏感度
-                'momentum': 0.15  # 增加动量权重，更好地捕捉中期趋势
-            }
-
-            # Adjust weights based on market type (Dimension 1: Timeframe Nesting)
-            if market_type == 'US':
-                # US stocks prioritize long-term trends
-                weights['trend'] = 0.30
-                weights['volatility'] = 0.10
-                weights['momentum'] = 0.20
-            elif market_type == 'HK':
-                # HK stocks adjust for volatility and volume
-                weights['volatility'] = 0.20
-                weights['volume'] = 0.20
-
-            # 1. Trend Score (30 points max) - Daily timeframe analysis
-            trend_score = 0
-
-            # Moving average evaluation - "three-line formation" pattern - 大幅提高评分
-            if latest['MA5'] > latest['MA20'] and latest['MA20'] > latest['MA60']:
-                # Perfect bullish alignment (dimension 1: daily pattern)
-                trend_score += 20  # 提高满分
-            elif latest['MA5'] > latest['MA20']:
-                # Short-term uptrend (dimension 1: 5-min pattern)
-                trend_score += 15  # 提高短期趋势评分
-            elif latest['MA20'] > latest['MA60']:
-                # Medium-term uptrend
-                trend_score += 12  # 提高中期趋势评分
-            else:
-                # 即使不满足上述条件，也给予基础分
-                trend_score += 5
-
-            # Price position evaluation - 优化价格位置评估
-            if latest['close'] > latest['MA5']:
-                trend_score += 5
-            if latest['close'] > latest['MA20']:
-                trend_score += 5
-            if latest['close'] > latest['MA60']:
-                trend_score += 5
+            prev_days = min(30, len(df) - 1)
             
-            # 新增：价格趋势评估
-            # 计算最近5天的价格变化趋势
+            # 基础权重配置 - 更加平衡的权重分配
+            weights = {
+                'trend': 0.20,       # 趋势分析
+                'momentum': 0.20,    # 动量分析
+                'technical': 0.25,   # 技术指标
+                'volatility': 0.15,  # 波动性分析
+                'volume': 0.10,      # 成交量分析
+                'market': 0.10       # 市场环境
+            }
+            
+            # 根据市场类型调整权重
+            if market_type == 'US':
+                # 美股更重视长期趋势和基本面
+                weights['trend'] = 0.25
+                weights['momentum'] = 0.15
+                weights['market'] = 0.15
+            elif market_type == 'HK':
+                # 港股更受A股和国际市场影响
+                weights['market'] = 0.15
+                weights['momentum'] = 0.15
+            
+            # 1. 趋势分析 (0-100分)
+            trend_score = 0
+            
+            # 均线系统评估 - 多周期分析
+            # 短期趋势 (5日均线)
+            if latest['MA5'] > latest['MA20']:
+                trend_score += 20
+            
+            # 中期趋势 (20日均线)
+            if latest['MA20'] > latest['MA60']:
+                trend_score += 20
+            
+            # 多头排列 (黄金排列)
+            if latest['MA5'] > latest['MA20'] and latest['MA20'] > latest['MA60']:
+                trend_score += 20
+            
+            # 价格位置评估
+            if latest['close'] > latest['MA5']:
+                trend_score += 10
+            if latest['close'] > latest['MA20']:
+                trend_score += 10
+            if latest['close'] > latest['MA60']:
+                trend_score += 10
+            
+            # 趋势持续性评估 - 检查最近5天的均线方向
+            ma5_direction = 0
+            ma20_direction = 0
+            
+            for i in range(1, min(6, len(df))):
+                if df.iloc[-i]['MA5'] > df.iloc[-i-1]['MA5']:
+                    ma5_direction += 1
+                if df.iloc[-i]['MA20'] > df.iloc[-i-1]['MA20']:
+                    ma20_direction += 1
+            
+            # 均线向上的天数越多，评分越高
+            trend_score += (ma5_direction / 5) * 5
+            trend_score += (ma20_direction / 5) * 5
+            
+            # 确保最大分数限制
+            trend_score = min(100, trend_score)
+            
+            # 2. 动量分析 (0-100分)
+            momentum_score = 0
+            
+            # ROC动量指标评估
+            roc = latest['ROC']
+            if roc > 8:  # 强劲上涨动量
+                momentum_score += 40
+            elif 4 <= roc <= 8:  # 良好上涨动量
+                momentum_score += 30
+            elif 0 <= roc < 4:  # 弱上涨动量
+                momentum_score += 20
+            elif -4 <= roc < 0:  # 弱下跌动量
+                momentum_score += 10
+            elif -8 <= roc < -4:  # 中等下跌动量
+                momentum_score += 5
+            
+            # 多周期动量比较 - 加速度分析
             try:
-                if len(df) >= 6:
-                    recent_price_change = (latest['close'] / df.iloc[-6]['close'] - 1) * 100
-                    if recent_price_change > 3:  # 5天涨幅超过3%
-                        trend_score += 5
-                    elif recent_price_change > 0:  # 5天有正涨幅
-                        trend_score += 3
-                    elif recent_price_change > -3:  # 5天跌幅小于3%
-                        trend_score += 1
-                    else:
-                        # 即使是下跌，也给予基础分
-                        trend_score += 0.5
+                if len(df) >= 21:
+                    # 计算不同周期的价格变化率
+                    price_change_5d = (latest['close'] / df.iloc[-6]['close'] - 1) * 100
+                    price_change_10d = (latest['close'] / df.iloc[-11]['close'] - 1) * 100
+                    price_change_20d = (latest['close'] / df.iloc[-21]['close'] - 1) * 100
+                    
+                    # 动量加速 - 短期动量强于长期动量
+                    if price_change_5d > price_change_10d > price_change_20d and price_change_5d > 0:
+                        # 完美的动量加速
+                        momentum_score += 30
+                    elif price_change_5d > price_change_10d and price_change_5d > 0:
+                        # 短期加速
+                        momentum_score += 20
+                    elif price_change_10d > price_change_20d and price_change_10d > 0:
+                        # 中期加速
+                        momentum_score += 15
+                    elif price_change_5d > 0 and price_change_10d > 0 and price_change_20d > 0:
+                        # 全周期正动量
+                        momentum_score += 10
             except Exception as e:
-                self.logger.warning(f"计算价格趋势时出错: {str(e)}")
-                # 出错时给予基础分
-                trend_score += 1
-
-            # Ensure maximum score limit
-            trend_score = min(30, trend_score)
-
-            # 2. Volatility Score (15 points max) - Dimension 2: Filtering
-            volatility_score = 0
-
-            # Moderate volatility is optimal - 优化波动率评分标准，更加宽容
-            volatility = latest['Volatility']
-            if 0.5 <= volatility <= 3.0:  # 进一步扩大最优波动率范围
-                # Optimal volatility, best case
-                volatility_score += 15
-            elif 3.0 < volatility <= 5.0:  # 扩大次优范围
-                # Higher volatility, second best
-                volatility_score += 12
-            elif 0.3 <= volatility < 0.5:  # 更宽容地评估低波动率
-                # Lower volatility, still acceptable
-                volatility_score += 10
-            elif volatility < 0.3:
-                # Too low volatility, lacks energy
-                volatility_score += 8  # 提高最低分
-            else:
-                # Too high volatility, high risk
-                volatility_score += 5  # 提高高波动率的分数
-
-            # 3. Technical Indicator Score (30 points max) - "Peak Detection System" - 增加总分上限
+                self.logger.warning(f"计算多周期动量时出错: {str(e)}")
+            
+            # 价格突破评估
+            try:
+                # 计算20日高点和低点
+                high_20d = max([df.iloc[-i]['high'] for i in range(1, min(21, len(df)))])
+                low_20d = min([df.iloc[-i]['low'] for i in range(1, min(21, len(df)))])
+                
+                # 突破20日高点
+                if latest['close'] > high_20d * 0.99 and latest['close'] < high_20d * 1.03:
+                    momentum_score += 30
+                # 跌破20日低点
+                elif latest['close'] < low_20d * 1.01 and latest['close'] > low_20d * 0.97:
+                    momentum_score -= 20
+            except Exception as e:
+                self.logger.warning(f"计算价格突破时出错: {str(e)}")
+            
+            # 确保分数在0-100范围内
+            momentum_score = max(0, min(100, momentum_score))
+            
+            # 3. 技术指标分析 (0-100分)
             technical_score = 0
-
-            # RSI indicator evaluation (10 points) - 优化RSI评分标准，更加宽容
+            
+            # RSI指标评估 - 超买超卖与背离
             rsi = latest['RSI']
-            if 40 <= rsi <= 60:
-                # Neutral zone, stable trend
-                technical_score += 8
-            elif 30 <= rsi < 40 or 60 < rsi <= 70:
-                # Threshold zone, potential reversal signals
+            if 40 <= rsi <= 60:  # 中性区域，稳定趋势
+                technical_score += 15
+            elif 30 <= rsi < 40:  # 接近超卖，潜在买入机会
+                technical_score += 25
+            elif 20 <= rsi < 30:  # 超卖区域，强烈买入信号
+                technical_score += 30
+            elif rsi < 20:  # 极度超卖，可能反转信号
+                technical_score += 25
+            elif 60 < rsi <= 70:  # 接近超买，潜在卖出机会
                 technical_score += 10
-            elif 20 <= rsi < 30:  # 更细致地评估超卖区域
-                # Oversold zone, strong buying opportunity
-                technical_score += 9
-            elif rsi < 20:  # 极度超卖
-                # Extremely oversold, potential strong reversal
-                technical_score += 8
-            elif 70 < rsi <= 80:  # 更细致地评估超买区域
-                # Overbought zone, caution needed
-                technical_score += 6  # 提高超买区域的分数
-            elif rsi > 80:  # 极度超买
-                # Extremely overbought, high selling pressure
-                technical_score += 4  # 提高极度超买的分数
-            else:
-                # 其他情况也给予基础分
-                technical_score += 3
-
-            # MACD indicator evaluation (10 points) - "Peak Warning Signal"
-            if latest['MACD'] > latest['Signal'] and latest['MACD_hist'] > 0:
-                # MACD golden cross and positive histogram
-                technical_score += 10
-            elif latest['MACD'] > latest['Signal']:
-                # MACD golden cross
-                technical_score += 8
-            elif latest['MACD_hist'] > df.iloc[-2]['MACD_hist'] and latest['MACD_hist'] > 0:
-                # MACD histogram increasing and positive, potential uptrend continuation
-                technical_score += 7
-            elif latest['MACD_hist'] > df.iloc[-2]['MACD_hist']:
-                # MACD histogram increasing, potential reversal signal
+            elif 70 < rsi <= 80:  # 超买区域，卖出信号
                 technical_score += 5
-            elif latest['MACD'] < latest['Signal'] and latest['MACD_hist'] < 0:
-                # MACD death cross and negative histogram
-                technical_score += 2  # 提高负面情况的分数
-            else:
-                # Other MACD conditions
-                technical_score += 3  # 提高其他情况的基础分
-
-            # Bollinger Band position evaluation (10 points) - 增加布林带评分权重
-            bb_position = (latest['close'] - latest['BB_lower']) / (latest['BB_upper'] - latest['BB_lower'])
-            if 0.3 <= bb_position <= 0.7:
-                # Price in middle zone of Bollinger Bands, stable trend
-                technical_score += 7  # 提高中间区域的分数
-            elif bb_position < 0.2:
-                # Price near lower band, potential oversold
+            elif rsi > 80:  # 极度超买，强烈卖出信号
+                technical_score += 0
+            
+            # RSI背离检测
+            try:
+                if len(df) >= 10:
+                    # 检查价格新高而RSI未创新高 (顶背离)
+                    price_new_high = latest['close'] > max([df.iloc[-i]['close'] for i in range(2, 10)])
+                    rsi_not_new_high = latest['RSI'] < max([df.iloc[-i]['RSI'] for i in range(2, 10)])
+                    
+                    if price_new_high and rsi_not_new_high and rsi > 70:
+                        technical_score -= 20  # 顶背离，看跌信号
+                    
+                    # 检查价格新低而RSI未创新低 (底背离)
+                    price_new_low = latest['close'] < min([df.iloc[-i]['close'] for i in range(2, 10)])
+                    rsi_not_new_low = latest['RSI'] > min([df.iloc[-i]['RSI'] for i in range(2, 10)])
+                    
+                    if price_new_low and rsi_not_new_low and rsi < 30:
+                        technical_score += 20  # 底背离，看涨信号
+            except Exception as e:
+                self.logger.warning(f"检测RSI背离时出错: {str(e)}")
+            
+            # MACD指标评估
+            if latest['MACD'] > latest['Signal'] and latest['MACD_hist'] > 0:
+                # MACD金叉且柱状图为正
+                technical_score += 25
+            elif latest['MACD'] > latest['Signal']:
+                # MACD金叉
+                technical_score += 20
+            elif latest['MACD_hist'] > 0 and latest['MACD_hist'] > df.iloc[-2]['MACD_hist']:
+                # 柱状图为正且增加，上升趋势增强
+                technical_score += 15
+            elif latest['MACD_hist'] > df.iloc[-2]['MACD_hist']:
+                # 柱状图增加，潜在反转信号
                 technical_score += 10
-            elif 0.2 <= bb_position < 0.3:
-                # Price approaching lower band, potential buying opportunity
-                technical_score += 8
-            elif 0.7 < bb_position <= 0.8:
-                # Price approaching upper band, potential selling opportunity
-                technical_score += 6  # 提高接近上轨的分数
-            elif bb_position > 0.8:
-                # Price near upper band, potential overbought
-                technical_score += 4  # 提高接近上轨的分数
-
-            # Ensure maximum score limit
-            technical_score = min(30, technical_score)
-
-            # 4. Volume Score (15 points max) - "Energy Conservation Dimension" - 降低总分上限
+            elif latest['MACD'] < latest['Signal'] and latest['MACD_hist'] < 0:
+                # MACD死叉且柱状图为负
+                technical_score += 0
+            else:
+                # 其他MACD情况
+                technical_score += 5
+            
+            # 布林带位置评估
+            bb_position = (latest['close'] - latest['BB_lower']) / (latest['BB_upper'] - latest['BB_lower'])
+            
+            if bb_position < 0.2:  # 接近下轨，潜在超卖
+                technical_score += 25
+            elif 0.2 <= bb_position < 0.4:  # 下轨和中轨之间，潜在买入区域
+                technical_score += 20
+            elif 0.4 <= bb_position <= 0.6:  # 中轨附近，中性
+                technical_score += 15
+            elif 0.6 < bb_position <= 0.8:  # 中轨和上轨之间，潜在卖出区域
+                technical_score += 5
+            elif bb_position > 0.8:  # 接近上轨，潜在超买
+                technical_score += 0
+            
+            # 布林带宽度评估 - 挤压和扩张
+            try:
+                bb_width = (latest['BB_upper'] - latest['BB_lower']) / latest['BB_middle']
+                bb_width_prev = (df.iloc[-10]['BB_upper'] - df.iloc[-10]['BB_lower']) / df.iloc[-10]['BB_middle']
+                
+                if bb_width < bb_width_prev * 0.8:  # 布林带收窄，波动性降低，可能即将爆发
+                    technical_score += 10
+                elif bb_width > bb_width_prev * 1.5:  # 布林带扩张，波动性增加
+                    technical_score += 5
+            except Exception as e:
+                self.logger.warning(f"计算布林带宽度时出错: {str(e)}")
+            
+            # 确保分数在0-100范围内
+            technical_score = max(0, min(100, technical_score))
+            
+            # 4. 波动性分析 (0-100分)
+            volatility_score = 0
+            
+            # 波动率评估 - 适中的波动率最佳
+            volatility = latest['Volatility']
+            if 0.8 <= volatility <= 2.5:  # 理想波动率范围
+                volatility_score += 50
+            elif 0.5 <= volatility < 0.8 or 2.5 < volatility <= 3.5:  # 次优波动率范围
+                volatility_score += 40
+            elif 0.3 <= volatility < 0.5 or 3.5 < volatility <= 5.0:  # 可接受波动率范围
+                volatility_score += 30
+            elif volatility < 0.3:  # 波动率过低，缺乏活力
+                volatility_score += 20
+            else:  # 波动率过高，风险较大
+                volatility_score += 10
+            
+            # ATR趋势评估
+            try:
+                atr_5d_avg = sum([df.iloc[-i]['ATR'] for i in range(1, 6)]) / 5
+                atr_20d_avg = sum([df.iloc[-i]['ATR'] for i in range(1, 21)]) / 20
+                
+                # ATR上升，波动性增加
+                if latest['ATR'] > atr_5d_avg > atr_20d_avg:
+                    volatility_score += 20
+                # ATR下降，波动性减少
+                elif latest['ATR'] < atr_5d_avg < atr_20d_avg:
+                    volatility_score += 30
+            except Exception as e:
+                self.logger.warning(f"计算ATR趋势时出错: {str(e)}")
+            
+            # 价格波动范围评估
+            try:
+                # 计算最近10天的日内波动率
+                intraday_volatility = [(df.iloc[-i]['high'] - df.iloc[-i]['low']) / df.iloc[-i]['low'] * 100 for i in range(1, 11)]
+                avg_intraday_volatility = sum(intraday_volatility) / len(intraday_volatility)
+                
+                if 1.0 <= avg_intraday_volatility <= 3.0:  # 适中的日内波动
+                    volatility_score += 20
+                elif avg_intraday_volatility < 1.0:  # 日内波动过小
+                    volatility_score += 10
+                else:  # 日内波动过大
+                    volatility_score += 0
+            except Exception as e:
+                self.logger.warning(f"计算日内波动率时出错: {str(e)}")
+            
+            # 确保分数在0-100范围内
+            volatility_score = max(0, min(100, volatility_score))
+            
+            # 5. 成交量分析 (0-100分)
             volume_score = 0
-
-            # Volume trend analysis - 优化成交量评分标准，更加宽容
+            
+            # 成交量趋势分析
             recent_vol_ratio = [df.iloc[-i]['Volume_Ratio'] for i in range(1, min(6, len(df)))]
             avg_vol_ratio = sum(recent_vol_ratio) / len(recent_vol_ratio)
-
-            if avg_vol_ratio > 1.5 and latest['close'] > df.iloc[-2]['close']:
-                # Volume surge with price increase - "volume energy threshold breakthrough"
-                volume_score += 15
-            elif avg_vol_ratio > 1.2 and latest['close'] > df.iloc[-2]['close']:
-                # Volume and price rising together
-                volume_score += 12
-            elif 0.8 <= avg_vol_ratio <= 1.2:
-                # Normal volume, stable market
-                volume_score += 10  # 提高正常成交量的分数
-            elif avg_vol_ratio < 0.8 and latest['close'] < df.iloc[-2]['close']:
-                # Decreasing volume with price decrease, potentially healthy correction
-                volume_score += 8  # 提高健康回调的分数
-            elif avg_vol_ratio > 1.2 and latest['close'] < df.iloc[-2]['close']:
-                # Volume increasing with price decrease, potentially heavy selling pressure
-                volume_score += 5  # 提高卖压情况的分数
-            else:
-                # Other situations
-                volume_score += 7  # 提高其他情况的分数
-
-            # 5. Momentum Score (15 points max) - Dimension 1: Weekly timeframe - 增加总分上限
-            momentum_score = 0
-
-            # ROC momentum indicator - 优化ROC评分标准，更加宽容
-            roc = latest['ROC']
-            if roc > 5:
-                # Strong upward momentum
-                momentum_score += 15
-            elif 2 <= roc <= 5:
-                # Moderate upward momentum
-                momentum_score += 12
-            elif 0 <= roc < 2:
-                # Weak upward momentum
-                momentum_score += 10  # 提高弱上行动量的分数
-            elif -2 <= roc < 0:
-                # Weak downward momentum
-                momentum_score += 8  # 提高弱下行动量的分数
-            elif -5 <= roc < -2:
-                # Moderate downward momentum
-                momentum_score += 5  # 提高中等下行动量的分数
-            else:
-                # Strong downward momentum
-                momentum_score += 3  # 提高强下行动量的分数
-
-            # 新增：价格动量评估
-            # 计算最近10天与20天的价格变化对比
-            try:
-                if len(df) >= 21:  # 确保有足够的数据
-                    price_momentum_10d = (latest['close'] / df.iloc[-11]['close'] - 1) * 100
-                    price_momentum_20d = (latest['close'] / df.iloc[-21]['close'] - 1) * 100
-                    
-                    # 短期动量强于长期动量，表明加速上涨
-                    if price_momentum_10d > price_momentum_20d and price_momentum_10d > 0:
-                        momentum_score = min(15, momentum_score + 3)
-                    # 即使短期动量弱于长期动量，只要都是正的，也给予加分
-                    elif price_momentum_10d > 0 and price_momentum_20d > 0:
-                        momentum_score = min(15, momentum_score + 1)
-            except Exception as e:
-                self.logger.warning(f"计算价格动量时出错: {str(e)}")
-                # 出错时给予基础分
-                momentum_score += 1
-
-            # Calculate total score based on weighted factors - "Resonance Formula"
-            # 使用新的权重计算总分
-            final_score = (
-                    trend_score * weights['trend'] / 0.25 +
-                    volatility_score * weights['volatility'] / 0.15 +
-                    technical_score * weights['technical'] / 0.30 +
-                    volume_score * weights['volume'] / 0.15 +
-                    momentum_score * weights['momentum'] / 0.15
-            )
-
-            # 市场环境调整因子 - 修复获取大盘指数数据的问题
-            market_adjustment = 0  # 默认不调整
             
-            # 根据市场类型确定指数代码
+            # 成交量与价格配合评估
+            if avg_vol_ratio > 1.5 and latest['close'] > df.iloc[-2]['close']:
+                # 放量上涨，强烈看涨信号
+                volume_score += 50
+            elif avg_vol_ratio > 1.2 and latest['close'] > df.iloc[-2]['close']:
+                # 量价齐升，看涨信号
+                volume_score += 40
+            elif 0.8 <= avg_vol_ratio <= 1.2:
+                # 正常成交量，市场稳定
+                volume_score += 30
+            elif avg_vol_ratio < 0.8 and latest['close'] < df.iloc[-2]['close']:
+                # 缩量下跌，可能是健康回调
+                volume_score += 20
+            elif avg_vol_ratio > 1.2 and latest['close'] < df.iloc[-2]['close']:
+                # 放量下跌，可能有较大卖压
+                volume_score += 10
+            else:
+                # 其他情况
+                volume_score += 20
+            
+            # 成交量变化趋势
+            try:
+                vol_trend = 0
+                # 使用volume列而不是Volume列，确保与calculate_indicators方法中的列名一致
+                for i in range(1, min(6, len(df))):
+                    if df.iloc[-i]['volume'] > df.iloc[-i-1]['volume']:
+                        vol_trend += 1
+                
+                # 成交量连续增加
+                volume_score += (vol_trend / 5) * 20
+            except Exception as e:
+                self.logger.warning(f"计算成交量趋势时出错: {str(e)}")
+                # 出错时不调整分数
+            
+            # 成交量突变检测
+            try:
+                # 使用volume列而不是Volume列，确保与calculate_indicators方法中的列名一致
+                vol_avg_10d = sum([df.iloc[-i]['volume'] for i in range(2, 12)]) / 10
+                
+                if latest['volume'] > vol_avg_10d * 2:  # 成交量是10日均量的2倍以上
+                    if latest['close'] > df.iloc[-2]['close']:  # 且价格上涨
+                        volume_score += 30
+                    else:  # 价格下跌
+                        volume_score -= 10
+            except Exception as e:
+                self.logger.warning(f"检测成交量突变时出错: {str(e)}")
+                # 出错时不调整分数
+            
+            # 确保分数在0-100范围内
+            volume_score = max(0, min(100, volume_score))
+            
+            # 6. 市场环境分析 (0-100分)
+            market_score = 50  # 默认中性评分
+            
+            # 获取对应市场指数
             index_code = None
             if market_type == 'A':
-                # 修改上证指数代码格式，确保与数据源匹配
-                index_code = 'sh000001'  # 修改为正确的上证指数代码格式
+                index_code = 'sh000001'  # 上证指数
             elif market_type == 'HK':
                 index_code = 'HSI'  # 恒生指数
             elif market_type == 'US':
                 index_code = 'SPX'  # 标普500
             
-            # 尝试获取指数数据
+            # 尝试获取指数数据并评估市场环境
             if index_code:
                 try:
-                    # 使用专门的方法获取指数数据，而不是通用的get_stock_data
                     index_df = self._get_index_data(index_code, market_type)
                     
-                    if index_df is not None and len(index_df) > 20:  # 确保有足够的数据
-                        # 计算指数20日涨跌幅
-                        index_change = (index_df.iloc[-1]['close'] / index_df.iloc[-21]['close'] - 1) * 100
+                    if index_df is not None and len(index_df) > 20:
+                        # 计算指数趋势
+                        index_latest = index_df.iloc[-1]
+                        index_ma5 = index_df['close'].rolling(window=5).mean().iloc[-1]
+                        index_ma20 = index_df['close'].rolling(window=20).mean().iloc[-1]
                         
-                        # 根据大盘走势调整评分
-                        if index_change > 5:  # 大盘强势上涨
-                            market_adjustment = 8  # 增加正面调整幅度
-                        elif index_change > 2:  # 大盘温和上涨
-                            market_adjustment = 5  # 增加正面调整幅度
-                        elif index_change < -5:  # 大盘大幅下跌
-                            market_adjustment = -2  # 减少负面调整幅度
-                        elif index_change < -2:  # 大盘温和下跌
-                            market_adjustment = -1  # 减少负面调整幅度
+                        # 指数趋势评分
+                        if index_latest['close'] > index_ma5 > index_ma20:
+                            # 指数多头排列
+                            market_score += 30
+                        elif index_latest['close'] > index_ma5:
+                            # 指数短期向上
+                            market_score += 20
+                        elif index_latest['close'] < index_ma5 < index_ma20:
+                            # 指数空头排列
+                            market_score -= 20
+                        
+                        # 计算指数动量
+                        index_change_5d = (index_latest['close'] / index_df.iloc[-6]['close'] - 1) * 100
+                        index_change_20d = (index_latest['close'] / index_df.iloc[-21]['close'] - 1) * 100
+                        
+                        # 指数动量评分
+                        if index_change_5d > 3:  # 短期强势上涨
+                            market_score += 20
+                        elif index_change_5d > 1:  # 短期温和上涨
+                            market_score += 10
+                        elif index_change_5d < -3:  # 短期大幅下跌
+                            market_score -= 20
+                        elif index_change_5d < -1:  # 短期温和下跌
+                            market_score -= 10
+                        
+                        # 长期趋势评分
+                        if index_change_20d > 5:  # 中期强势上涨
+                            market_score += 10
+                        elif index_change_20d < -5:  # 中期大幅下跌
+                            market_score -= 10
                 except Exception as e:
                     self.logger.warning(f"获取指数 {index_code} 数据失败: {str(e)}")
-                    # 获取失败时不进行调整
             
-            # 应用市场环境调整
-            final_score += market_adjustment
-
-            # Special market adjustments - "Market Adaptation Mechanism"
+            # 特殊市场调整
             if market_type == 'US':
-                # US market additional adjustment factors
-                # Check if it's earnings season
+                # 美股特殊调整 - 财报季
                 is_earnings_season = self._is_earnings_season()
                 if is_earnings_season:
-                    # Earnings season has higher volatility, adjust score certainty
-                    final_score = 0.95 * final_score + 5  # 增加基础分
-
+                    # 财报季波动性更高，调整确定性
+                    market_score = market_score * 0.9  # 降低确定性
+            
             elif market_type == 'HK':
-                # HK stocks special adjustment
-                # Check for A-share linkage effect
+                # 港股特殊调整 - A股联动效应
                 a_share_linkage = self._check_a_share_linkage(df)
-                if a_share_linkage > 0.7:  # High linkage
-                    # Adjust based on mainland market sentiment
+                if a_share_linkage > 0.7:  # 高度联动
+                    # 根据内地市场情绪调整
                     mainland_sentiment = self._get_mainland_market_sentiment()
-                    if mainland_sentiment > 0:
-                        final_score += 5  # 增加正面调整幅度
-                    else:
-                        final_score -= 1  # 进一步减少负面调整幅度
-
-            # 全局基础分调整 - 新增
-            # 确保评分有一个较高的基础值，避免过低评分
-            base_score_adjustment = 15  # 添加基础分
-            final_score += base_score_adjustment
-
-            # Ensure score remains within 0-100 range
+                    market_score += mainland_sentiment * 10
+            
+            # 确保分数在0-100范围内
+            market_score = max(0, min(100, market_score))
+            
+            # 计算加权总分
+            final_score = (
+                trend_score * weights['trend'] +
+                momentum_score * weights['momentum'] +
+                technical_score * weights['technical'] +
+                volatility_score * weights['volatility'] +
+                volume_score * weights['volume'] +
+                market_score * weights['market']
+            )
+            
+            # 确保最终分数在0-100范围内
             final_score = max(0, min(100, round(final_score)))
-
-            # Store sub-scores for display
+            
+            # 存储各维度评分详情
             self.score_details = {
                 'trend': trend_score,
-                'volatility': volatility_score,
-                'technical': technical_score,
-                'volume': volume_score,
                 'momentum': momentum_score,
+                'technical': technical_score,
+                'volatility': volatility_score,
+                'volume': volume_score,
+                'market': market_score,
                 'total': final_score
             }
-
-            return final_score
-
-        except Exception as e:
-            self.logger.error(f"Error calculating score: {str(e)}")
-            # Return neutral score on error
-            return 50
             
+            return final_score
+            
+        except Exception as e:
+            self.logger.error(f"计算评分时出错: {str(e)}")
+            self.logger.error(f"错误详情: {traceback.format_exc()}")
+            # 出错时返回中性评分
+            return 50
+
     def _get_index_data(self, index_code, market_type='A'):
         """
         获取指数数据的专用方法
