@@ -312,16 +312,19 @@ class StockAnalyzer:
             # 1. Trend Score (30 points max) - Daily timeframe analysis
             trend_score = 0
 
-            # Moving average evaluation - "three-line formation" pattern
+            # Moving average evaluation - "three-line formation" pattern - 大幅提高评分
             if latest['MA5'] > latest['MA20'] and latest['MA20'] > latest['MA60']:
                 # Perfect bullish alignment (dimension 1: daily pattern)
-                trend_score += 15
+                trend_score += 20  # 提高满分
             elif latest['MA5'] > latest['MA20']:
                 # Short-term uptrend (dimension 1: 5-min pattern)
-                trend_score += 8  # 降低短期趋势的权重
+                trend_score += 15  # 提高短期趋势评分
             elif latest['MA20'] > latest['MA60']:
                 # Medium-term uptrend
-                trend_score += 7  # 增加中期趋势的权重
+                trend_score += 12  # 提高中期趋势评分
+            else:
+                # 即使不满足上述条件，也给予基础分
+                trend_score += 5
 
             # Price position evaluation - 优化价格位置评估
             if latest['close'] > latest['MA5']:
@@ -342,9 +345,13 @@ class StockAnalyzer:
                         trend_score += 3
                     elif recent_price_change > -3:  # 5天跌幅小于3%
                         trend_score += 1
+                    else:
+                        # 即使是下跌，也给予基础分
+                        trend_score += 0.5
             except Exception as e:
                 self.logger.warning(f"计算价格趋势时出错: {str(e)}")
-                # 出错时不加分
+                # 出错时给予基础分
+                trend_score += 1
 
             # Ensure maximum score limit
             trend_score = min(30, trend_score)
@@ -352,32 +359,32 @@ class StockAnalyzer:
             # 2. Volatility Score (15 points max) - Dimension 2: Filtering
             volatility_score = 0
 
-            # Moderate volatility is optimal - 优化波动率评分标准
+            # Moderate volatility is optimal - 优化波动率评分标准，更加宽容
             volatility = latest['Volatility']
-            if 0.8 <= volatility <= 2.5:  # 扩大最优波动率范围
+            if 0.5 <= volatility <= 3.0:  # 进一步扩大最优波动率范围
                 # Optimal volatility, best case
                 volatility_score += 15
-            elif 2.5 < volatility <= 4.0:
+            elif 3.0 < volatility <= 5.0:  # 扩大次优范围
                 # Higher volatility, second best
-                volatility_score += 10
-            elif 0.5 <= volatility < 0.8:  # 更宽容地评估低波动率
+                volatility_score += 12
+            elif 0.3 <= volatility < 0.5:  # 更宽容地评估低波动率
                 # Lower volatility, still acceptable
-                volatility_score += 8
-            elif volatility < 0.5:
+                volatility_score += 10
+            elif volatility < 0.3:
                 # Too low volatility, lacks energy
-                volatility_score += 5
+                volatility_score += 8  # 提高最低分
             else:
                 # Too high volatility, high risk
-                volatility_score += 3  # 给高波动率一些基础分
+                volatility_score += 5  # 提高高波动率的分数
 
             # 3. Technical Indicator Score (30 points max) - "Peak Detection System" - 增加总分上限
             technical_score = 0
 
-            # RSI indicator evaluation (10 points) - 优化RSI评分标准
+            # RSI indicator evaluation (10 points) - 优化RSI评分标准，更加宽容
             rsi = latest['RSI']
             if 40 <= rsi <= 60:
                 # Neutral zone, stable trend
-                technical_score += 7
+                technical_score += 8
             elif 30 <= rsi < 40 or 60 < rsi <= 70:
                 # Threshold zone, potential reversal signals
                 technical_score += 10
@@ -389,10 +396,13 @@ class StockAnalyzer:
                 technical_score += 8
             elif 70 < rsi <= 80:  # 更细致地评估超买区域
                 # Overbought zone, caution needed
-                technical_score += 4
+                technical_score += 6  # 提高超买区域的分数
             elif rsi > 80:  # 极度超买
                 # Extremely overbought, high selling pressure
-                technical_score += 2
+                technical_score += 4  # 提高极度超买的分数
+            else:
+                # 其他情况也给予基础分
+                technical_score += 3
 
             # MACD indicator evaluation (10 points) - "Peak Warning Signal"
             if latest['MACD'] > latest['Signal'] and latest['MACD_hist'] > 0:
@@ -409,16 +419,16 @@ class StockAnalyzer:
                 technical_score += 5
             elif latest['MACD'] < latest['Signal'] and latest['MACD_hist'] < 0:
                 # MACD death cross and negative histogram
-                technical_score += 0
+                technical_score += 2  # 提高负面情况的分数
             else:
                 # Other MACD conditions
-                technical_score += 2  # 给其他情况一些基础分
+                technical_score += 3  # 提高其他情况的基础分
 
             # Bollinger Band position evaluation (10 points) - 增加布林带评分权重
             bb_position = (latest['close'] - latest['BB_lower']) / (latest['BB_upper'] - latest['BB_lower'])
             if 0.3 <= bb_position <= 0.7:
                 # Price in middle zone of Bollinger Bands, stable trend
-                technical_score += 6
+                technical_score += 7  # 提高中间区域的分数
             elif bb_position < 0.2:
                 # Price near lower band, potential oversold
                 technical_score += 10
@@ -427,10 +437,10 @@ class StockAnalyzer:
                 technical_score += 8
             elif 0.7 < bb_position <= 0.8:
                 # Price approaching upper band, potential selling opportunity
-                technical_score += 4
+                technical_score += 6  # 提高接近上轨的分数
             elif bb_position > 0.8:
                 # Price near upper band, potential overbought
-                technical_score += 2
+                technical_score += 4  # 提高接近上轨的分数
 
             # Ensure maximum score limit
             technical_score = min(30, technical_score)
@@ -438,7 +448,7 @@ class StockAnalyzer:
             # 4. Volume Score (15 points max) - "Energy Conservation Dimension" - 降低总分上限
             volume_score = 0
 
-            # Volume trend analysis - 优化成交量评分标准
+            # Volume trend analysis - 优化成交量评分标准，更加宽容
             recent_vol_ratio = [df.iloc[-i]['Volume_Ratio'] for i in range(1, min(6, len(df)))]
             avg_vol_ratio = sum(recent_vol_ratio) / len(recent_vol_ratio)
 
@@ -450,21 +460,21 @@ class StockAnalyzer:
                 volume_score += 12
             elif 0.8 <= avg_vol_ratio <= 1.2:
                 # Normal volume, stable market
-                volume_score += 8
+                volume_score += 10  # 提高正常成交量的分数
             elif avg_vol_ratio < 0.8 and latest['close'] < df.iloc[-2]['close']:
                 # Decreasing volume with price decrease, potentially healthy correction
-                volume_score += 6
+                volume_score += 8  # 提高健康回调的分数
             elif avg_vol_ratio > 1.2 and latest['close'] < df.iloc[-2]['close']:
                 # Volume increasing with price decrease, potentially heavy selling pressure
-                volume_score += 3
+                volume_score += 5  # 提高卖压情况的分数
             else:
                 # Other situations
-                volume_score += 5
+                volume_score += 7  # 提高其他情况的分数
 
             # 5. Momentum Score (15 points max) - Dimension 1: Weekly timeframe - 增加总分上限
             momentum_score = 0
 
-            # ROC momentum indicator - 优化ROC评分标准
+            # ROC momentum indicator - 优化ROC评分标准，更加宽容
             roc = latest['ROC']
             if roc > 5:
                 # Strong upward momentum
@@ -474,16 +484,16 @@ class StockAnalyzer:
                 momentum_score += 12
             elif 0 <= roc < 2:
                 # Weak upward momentum
-                momentum_score += 8
+                momentum_score += 10  # 提高弱上行动量的分数
             elif -2 <= roc < 0:
                 # Weak downward momentum
-                momentum_score += 5
+                momentum_score += 8  # 提高弱下行动量的分数
             elif -5 <= roc < -2:
                 # Moderate downward momentum
-                momentum_score += 3
+                momentum_score += 5  # 提高中等下行动量的分数
             else:
                 # Strong downward momentum
-                momentum_score += 1  # 给强下行动量一些基础分
+                momentum_score += 3  # 提高强下行动量的分数
 
             # 新增：价格动量评估
             # 计算最近10天与20天的价格变化对比
@@ -495,9 +505,13 @@ class StockAnalyzer:
                     # 短期动量强于长期动量，表明加速上涨
                     if price_momentum_10d > price_momentum_20d and price_momentum_10d > 0:
                         momentum_score = min(15, momentum_score + 3)
+                    # 即使短期动量弱于长期动量，只要都是正的，也给予加分
+                    elif price_momentum_10d > 0 and price_momentum_20d > 0:
+                        momentum_score = min(15, momentum_score + 1)
             except Exception as e:
                 self.logger.warning(f"计算价格动量时出错: {str(e)}")
-                # 出错时不加分
+                # 出错时给予基础分
+                momentum_score += 1
 
             # Calculate total score based on weighted factors - "Resonance Formula"
             # 使用新的权重计算总分
@@ -534,11 +548,11 @@ class StockAnalyzer:
                         
                         # 根据大盘走势调整评分
                         if index_change > 5:  # 大盘强势上涨
-                            market_adjustment = 5
+                            market_adjustment = 8  # 增加正面调整幅度
                         elif index_change > 2:  # 大盘温和上涨
-                            market_adjustment = 3
+                            market_adjustment = 5  # 增加正面调整幅度
                         elif index_change < -5:  # 大盘大幅下跌
-                            market_adjustment = -3  # 减少负面调整幅度
+                            market_adjustment = -2  # 减少负面调整幅度
                         elif index_change < -2:  # 大盘温和下跌
                             market_adjustment = -1  # 减少负面调整幅度
                 except Exception as e:
@@ -555,7 +569,7 @@ class StockAnalyzer:
                 is_earnings_season = self._is_earnings_season()
                 if is_earnings_season:
                     # Earnings season has higher volatility, adjust score certainty
-                    final_score = 0.95 * final_score + 3  # 减少回归均值的程度
+                    final_score = 0.95 * final_score + 5  # 增加基础分
 
             elif market_type == 'HK':
                 # HK stocks special adjustment
@@ -565,9 +579,14 @@ class StockAnalyzer:
                     # Adjust based on mainland market sentiment
                     mainland_sentiment = self._get_mainland_market_sentiment()
                     if mainland_sentiment > 0:
-                        final_score += 3  # 减少正面调整幅度
+                        final_score += 5  # 增加正面调整幅度
                     else:
-                        final_score -= 2  # 减少负面调整幅度
+                        final_score -= 1  # 进一步减少负面调整幅度
+
+            # 全局基础分调整 - 新增
+            # 确保评分有一个较高的基础值，避免过低评分
+            base_score_adjustment = 15  # 添加基础分
+            final_score += base_score_adjustment
 
             # Ensure score remains within 0-100 range
             final_score = max(0, min(100, round(final_score)))
@@ -692,20 +711,20 @@ class StockAnalyzer:
         Enhanced with Time-Space Resonance Trading System strategies
         """
         try:
-            # 1. Base recommendation logic - 优化阈值，使评分更加平衡
-            if score >= 80:  # 降低强烈买入阈值
+            # 1. Base recommendation logic - 大幅调整阈值，匹配新的评分系统
+            if score >= 75:  # 降低强烈买入阈值
                 base_recommendation = '强烈建议买入'
                 confidence = 'high'
                 action = 'strong_buy'
-            elif score >= 65:  # 降低买入阈值
+            elif score >= 60:  # 降低买入阈值
                 base_recommendation = '建议买入'
                 confidence = 'medium_high'
                 action = 'buy'
-            elif score >= 50:  # 降低谨慎买入阈值
+            elif score >= 45:  # 降低谨慎买入阈值
                 base_recommendation = '谨慎买入'
                 confidence = 'medium'
                 action = 'cautious_buy'
-            elif score >= 40:  # 调整观望阈值
+            elif score >= 35:  # 调整观望阈值
                 base_recommendation = '持观望态度'
                 confidence = 'medium'
                 action = 'hold'
@@ -713,7 +732,7 @@ class StockAnalyzer:
                 base_recommendation = '谨慎持有'
                 confidence = 'medium'
                 action = 'cautious_hold'
-            elif score >= 10:  # 调整减仓阈值
+            elif score >= 15:  # 调整减仓阈值
                 base_recommendation = '建议减仓'
                 confidence = 'medium_high'
                 action = 'reduce'
