@@ -1534,5 +1534,5 @@ cleaner_thread.daemon = True
 cleaner_thread.start()
 
 if __name__ == '__main__':
-    # 将 host 设置为 '0.0.0.0' 使其支持所有网络接口访问
-    app.run(host='0.0.0.0', port=8888, debug=False)
+    DEBUG = os.getenv('DEBUG', 'False').lower() == 'true'
+    app.run(host='0.0.0.0', port=8888, debug=DEBUG)
