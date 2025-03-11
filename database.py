@@ -89,7 +89,9 @@ Session = sessionmaker(bind=engine)
 
 # 初始化数据库
 def init_db():
-    Base.metadata.create_all(engine)
+    DEBUG = os.getenv('DEBUG', 'False').lower() == 'true'
+    if DEBUG is False:
+        Base.metadata.create_all(engine)
 
 
 # 获取数据库会话
