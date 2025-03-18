@@ -329,7 +329,7 @@
                         <a class="nav-link {% if request.path == '/' %}active{% endif %}" href="/"><i class="fas fa-home"></i> 主页</a>
                     </li>
                     <li class="nav-item">
-                        <a class="nav-link {% if request.path == '/dashboard' %}active{% endif %}" href="/dashboard"><i class="fas fa-chart-line"></i> 智能仪表盘</a>
+                        <a class="nav-link {% if request.path == '/dashboard' %}active{% endif %}" href="/dashboard"><i class="fas fa-chart-line"></i> 智能股票分析</a>
                     </li>
                     <!-- 新增菜单项 - 基本面分析 -->
                     <li class="nav-item">
@@ -360,9 +360,9 @@
                 </ul>
                 <div class="d-flex">
                     <div class="input-group">
-                        <input type="text" id="search-stock" class="form-control" placeholder="搜索股票代码/名称" aria-label="搜索股票">
+{#                        <input type="text" id="search-stock" class="form-control" placeholder="搜索股票代码/名称" aria-label="搜索股票">#}
                         <button class="btn btn-light" type="button" id="search-button">
-                            <i class="fas fa-search"></i>
+                            <i class="fas fa-user"></i>
                         </button>
                     </div>
                 </div>
@@ -436,6 +436,8 @@
             const stockCode = $('#search-stock').val().trim();
             if (stockCode) {
                 window.location.href = `/stock_detail/${stockCode}`;
+            } else {
+                alert('暂未支持, 敬请期待~');
             }
         });
 
