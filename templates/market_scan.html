@@ -180,9 +180,10 @@
                 disableUnsupportedOptionsForUS();
             } else {
                 $('#us-stock-note').hide();
-                $('#index-scan-group').show();
-                $('#industry-select-group').show();
-                $('#index-select-group').show();
+                // 显示指数和行业选择相关的UI元素
+                $('#index-selector').closest('.col-md-3').show();
+                $('#industry-selector').closest('.col-md-3').show();
+                $('#scan-type').closest('.col-md-4').show();
                 updateScanTypeVisibility();
             }
             
@@ -556,16 +557,21 @@
             $('#us-stock-note').show();
             // 美股暂时只支持全部股票扫描
             $('#scan-type').val('all');
-            $('#index-scan-group').hide();
-            $('#industry-select-group').hide();
-            $('#index-select-group').hide();
+            $('#scan-type').closest('.col-md-4').hide();
+            
+            // 隐藏指数和行业选择器
+            $('#index-selector').closest('.col-md-3').hide();
+            $('#industry-selector').closest('.col-md-3').hide();
+            
             // 清空行业选择器的值
             $('#industry-selector').val('');
+            $('#index-selector').val('');
+            
             // 增加额外的提示信息
             if ($('#us-market-warning').length === 0) {
                 $('#us-stock-note').append('<div id="us-market-warning" class="mt-2">'+
-                    '<span class="text-danger">美股市场暂不支持行业和指数筛选</span><br>'+
-                    '<span class="text-info">直接点击"扫描"按钮将自动获取热门美股，或使用自定义股票代码功能输入特定美股代码</span>'+
+                    '<span class="text-danger">美股市场不支持行业和指数筛选</span><br>'+
+                    '<span class="text-info">直接点击"扫描"按钮将自动获取热门美股</span>'+
                     '</div>');
             }
         }
