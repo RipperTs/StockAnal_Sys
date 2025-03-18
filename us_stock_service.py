@@ -77,6 +77,11 @@ class USStockService:
         :return: 包含历史数据的DataFrame
         """
         try:
+            # 增加验证，确保不是A股科创板代码等
+            if stock_code.startswith('688') or stock_code.startswith('300') or stock_code.startswith('301') or stock_code.startswith('003'):
+                self.logger.error(f"股票代码 {stock_code} 不是美股代码，可能是A股代码")
+                raise ValueError(f"股票代码 {stock_code} 不是美股代码，请使用正确的美股代码")
+            
             self.logger.info(f"获取美股 {stock_code} 历史数据")
             
             # 缓存键

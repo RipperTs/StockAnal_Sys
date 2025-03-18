@@ -911,60 +911,6 @@ def api_search_us_stocks():
         return jsonify({'error': str(e)}), 500
 
 
-# @app.route('/api/market_scan', methods=['POST'])
-# def api_market_scan():
-#     try:
-#         data = request.json
-#         stock_list = data.get('stock_list', [])
-#         min_score = data.get('min_score', 60)
-#         market_type = data.get('market_type', 'A')
-
-#         if not stock_list:
-#             return jsonify({'error': '请提供股票列表'}), 400
-
-#         # 限制股票数量，避免过长处理时间
-#         if len(stock_list) > 100:
-#             app.logger.warning(f"股票列表过长 ({len(stock_list)}只)，截取前100只")
-#             stock_list = stock_list[:100]
-
-#         # 执行市场扫描
-#         app.logger.info(f"开始扫描 {len(stock_list)} 只股票，最低分数: {min_score}")
-
-#         # 使用线程池优化处理
-#         results = []
-#         max_workers = min(10, len(stock_list))  # 最多10个工作线程
-
-#         # 设置较长的超时时间
-#         timeout = 300  # 5分钟
-
-#         def scan_thread():
-#             try:
-#                 return analyzer.scan_market(stock_list, min_score, market_type)
-#             except Exception as e:
-#                 app.logger.error(f"扫描线程出错: {str(e)}")
-#                 return []
-
-#         thread = threading.Thread(target=lambda: results.append(scan_thread()))
-#         thread.start()
-#         thread.join(timeout)
-
-#         if thread.is_alive():
-#             app.logger.error(f"市场扫描超时，已扫描 {len(stock_list)} 只股票超过 {timeout} 秒")
-#             return custom_jsonify({'error': '扫描超时，请减少股票数量或稍后再试'}), 504
-
-#         if not results or not results[0]:
-#             app.logger.warning("扫描结果为空")
-#             return custom_jsonify({'results': []})
-
-#         scan_results = results[0]
-#         app.logger.info(f"扫描完成，找到 {len(scan_results)} 只符合条件的股票")
-
-#         # 使用自定义JSON格式处理NumPy数据类型
-#         return custom_jsonify({'results': scan_results})
-#     except Exception as e:
-#         app.logger.error(f"执行市场扫描时出错: {traceback.format_exc()}")
-#         return custom_jsonify({'error': str(e)}), 500
-
 @app.route('/api/start_market_scan', methods=['POST'])
 def start_market_scan():
     """启动市场扫描任务"""
@@ -1149,6 +1095,12 @@ def get_index_stocks():
     try:
         import akshare as ak
         index_code = request.args.get('index_code', '000300')  # 默认沪深300
+        market_type = request.args.get('market_type', 'A')  # 获取市场类型
+
+        # 检查是否是美股指数
+        if market_type == 'US':
+            app.logger.warning(f"美股市场暂不支持指数成分股的自动获取: {index_code}")
+            return jsonify({'error': '美股市场暂不支持指数成分股的自动获取，请使用自定义股票代码功能'}), 400
 
         # 获取指数成分股
         app.logger.info(f"获取指数 {index_code} 成分股")
@@ -1177,15 +1129,59 @@ def get_index_stocks():
         return jsonify({'error': str(e)}), 500
 
 
+@app.route('/api/popular_us_stocks', methods=['GET'])
+def get_popular_us_stocks():
+    """获取热门美股列表"""
+    try:
+        import akshare as ak
+        
+        # 使用akshare获取知名美股列表
+        app.logger.info("获取知名美股列表")
+        try:
+            famous_stocks = ak.stock_us_famous_spot_em()
+            # 提取股票代码列表
+            stock_list = famous_stocks['代码'].tolist() if '代码' in famous_stocks.columns else []
+            app.logger.info(f"找到 {len(stock_list)} 只知名美股")
+            
+            # 如果返回的列表为空或获取失败，使用备用列表
+            if not stock_list:
+                raise Exception("获取知名美股列表为空")
+        except Exception as ak_e:
+            app.logger.warning(f"通过akshare获取知名美股失败: {str(ak_e)}，使用备用列表")
+            # 备用的热门美股列表
+            stock_list = [
+                # 科技股
+                'AAPL', 'MSFT', 'GOOGL', 'AMZN', 'META', 'TSLA', 'NVDA', 'NFLX', 
+                # 金融股
+                'JPM', 'BAC', 'WFC', 'GS', 
+                # 医疗保健
+                'JNJ', 'PFE', 'MRK', 
+                # 消费品
+                'KO', 'PEP', 'WMT', 'MCD',
+                # 半导体
+                'AMD', 'INTC', 'TSM', 'QCOM'
+            ]
+        
+        return jsonify({'stock_list': stock_list})
+    except Exception as e:
+        app.logger.error(f"获取热门美股列表时出错: {traceback.format_exc()}")
+        return jsonify({'error': str(e)}), 500
+
 @app.route('/api/industry_stocks', methods=['GET'])
 def get_industry_stocks():
     """获取行业成分股"""
     try:
         import akshare as ak
         industry = request.args.get('industry', '')
+        market_type = request.args.get('market_type', 'A')  # 默认为A股
 
         if not industry:
             return jsonify({'error': '请提供行业名称'}), 400
+            
+        # 检查市场类型
+        if market_type == 'US':
+            app.logger.warning(f"美股市场暂不支持行业筛选: {industry}")
+            return jsonify({'error': '美股市场暂不支持行业筛选功能，请使用自定义股票代码进行筛选'}), 400
 
         # 获取行业成分股
         app.logger.info(f"获取 {industry} 行业成分股")

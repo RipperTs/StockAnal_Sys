@@ -165,6 +165,11 @@
     $(document).ready(function() {
         // 初始化
         updateIndexOptions();
+        // 初始化时检查当前市场类型
+        const initialMarketType = $('#market-type').val();
+        if (initialMarketType === 'US') {
+            disableUnsupportedOptionsForUS();
+        }
         
         // 监听市场类型变化
         $('#market-type').change(function() {
@@ -172,15 +177,12 @@
             
             // 处理美股市场特殊提示
             if (marketType === 'US') {
-                $('#us-stock-note').show();
-                // 美股暂时只支持全部股票扫描
-                $('#scan-type').val('all');
-                $('#index-scan-group').hide();
-                $('#industry-select-group').hide();
-                $('#index-select-group').hide();
+                disableUnsupportedOptionsForUS();
             } else {
                 $('#us-stock-note').hide();
                 $('#index-scan-group').show();
+                $('#industry-select-group').show();
+                $('#index-select-group').show();
                 updateScanTypeVisibility();
             }
             
@@ -194,6 +196,9 @@
 
             // 获取股票列表
             let stockList = [];
+            
+            // 获取当前市场类型
+            const marketType = $('#market-type').val();
 
             // 获取指数股票
             const indexCode = $('#index-selector').val();
@@ -215,7 +220,12 @@
                 stockList = customStocks.split(',').map(s => s.trim());
                 scanMarket(stockList);
             } else {
-                showError('请至少选择一种方式获取股票列表');
+                // 美股市场特殊处理：如果没有选择任何方式，自动获取热门美股
+                if (marketType === 'US') {
+                    fetchPopularUSStocks();
+                } else {
+                    showError('请至少选择一种方式获取股票列表');
+                }
             }
         });
 
@@ -242,9 +252,12 @@
         function fetchIndexStocks(indexCode) {
             $('#scan-loading').show();
             $('#scan-results').hide();
+            
+            // 获取当前选择的市场类型
+            const marketType = $('#market-type').val();
 
             $.ajax({
-                url: `/api/index_stocks?index_code=${indexCode}`,
+                url: `/api/index_stocks?index_code=${indexCode}&market_type=${marketType}`,
                 type: 'GET',
                 dataType: 'json',
                 success: function(response) {
@@ -272,9 +285,12 @@
         function fetchIndustryStocks(industry) {
             $('#scan-loading').show();
             $('#scan-results').hide();
+            
+            // 获取当前选择的市场类型
+            const marketType = $('#market-type').val();
 
             $.ajax({
-                url: `/api/industry_stocks?industry=${encodeURIComponent(industry)}`,
+                url: `/api/industry_stocks?industry=${encodeURIComponent(industry)}&market_type=${marketType}`,
                 type: 'GET',
                 dataType: 'json',
                 success: function(response) {
@@ -471,6 +487,8 @@
                 const priceChangeClass = result.price_change >= 0 ? 'trend-up' : 'trend-down';
                 const priceChangeIcon = result.price_change >= 0 ? '<i class="fas fa-caret-up"></i>' : '<i class="fas fa-caret-down"></i>';
 
+                const marketType = $('#market-type').val();
+
                 html += `
                     <tr>
                         <td>${result.stock_code}</td>
@@ -484,7 +502,7 @@
                         <td>${result.volume_status}</td>
                         <td>${result.recommendation}</td>
                         <td>
-                            <a href="/stock_detail/${result.stock_code}" class="btn btn-sm btn-primary">
+                            <a href="/stock_detail/${result.stock_code}?market_type=${marketType}&period=1y" class="btn btn-sm btn-primary">
                                 <i class="fas fa-chart-line"></i> 详情
                             </a>
                         </td>
@@ -531,6 +549,61 @@
             link.click();
 
             document.body.removeChild(link);
+        }
+
+        // 函数：禁用美股不支持的选项
+        function disableUnsupportedOptionsForUS() {
+            $('#us-stock-note').show();
+            // 美股暂时只支持全部股票扫描
+            $('#scan-type').val('all');
+            $('#index-scan-group').hide();
+            $('#industry-select-group').hide();
+            $('#index-select-group').hide();
+            // 清空行业选择器的值
+            $('#industry-selector').val('');
+            // 增加额外的提示信息
+            if ($('#us-market-warning').length === 0) {
+                $('#us-stock-note').append('<div id="us-market-warning" class="mt-2">'+
+                    '<span class="text-danger">美股市场暂不支持行业和指数筛选</span><br>'+
+                    '<span class="text-info">直接点击"扫描"按钮将自动获取热门美股，或使用自定义股票代码功能输入特定美股代码</span>'+
+                    '</div>');
+            }
+        }
+
+        // 获取热门美股
+        function fetchPopularUSStocks() {
+            $('#scan-loading').show();
+            $('#scan-results').hide();
+            
+            $('#scan-message').html('正在获取热门美股列表，请稍候...');
+
+            $.ajax({
+                url: '/api/popular_us_stocks',
+                type: 'GET',
+                dataType: 'json',
+                success: function(response) {
+                    const stockList = response.stock_list;
+                    if (stockList && stockList.length > 0) {
+                        // 保存最近的扫描列表用于重试
+                        window.lastScanList = stockList;
+                        
+                        // 更新消息
+                        $('#scan-message').html(`已获取${stockList.length}只热门美股，开始扫描...`);
+                        
+                        // 开始扫描
+                        scanMarket(stockList);
+                    } else {
+                        $('#scan-loading').hide();
+                        $('#scan-results').show();
+                        showError('获取热门美股列表失败，或列表为空');
+                    }
+                },
+                error: function(error) {
+                    $('#scan-loading').hide();
+                    $('#scan-results').show();
+                    showError('获取热门美股列表失败: ' + (error.responseJSON ? error.responseJSON.error : error.statusText));
+                }
+            });
         }
     });
 
