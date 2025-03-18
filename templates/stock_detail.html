@@ -276,11 +276,26 @@
                 break;
                 
             case 'US': // 美股
-                // 检测是否是夏令时
-                // 美国夏令时一般是3月第二个周日到11月第一个周日
-                // 这里使用简化的判断：4月到10月认为是夏令时
-                const month = now.getMonth() + 1; // getMonth() 返回 0-11
-                const isDST = month >= 4 && month <= 10;
+                // 使用更准确的夏令时判断 - 美国夏令时从3月第二个周日开始，到11月第一个周日结束
+                const isInDST = function(date) {
+                    const year = date.getFullYear();
+                    
+                    // 3月第二个周日
+                    let dstStart = new Date(year, 2, 1); // 3月1日
+                    dstStart.setDate(dstStart.getDate() + (14 - dstStart.getDay()) % 7); // 第二个周日
+                    
+                    // 11月第一个周日
+                    let dstEnd = new Date(year, 10, 1); // 11月1日
+                    dstEnd.setDate(dstEnd.getDate() + (7 - dstEnd.getDay()) % 7); // 第一个周日
+                    
+                    // 调整开始和结束时间为当天的2AM
+                    dstStart.setHours(2, 0, 0, 0);
+                    dstEnd.setHours(2, 0, 0, 0);
+                    
+                    return date >= dstStart && date < dstEnd;
+                };
+                
+                const isDST = isInDST(now);
                 
                 // 美东时间周一至周五，9:30-16:00
                 // 转换为北京时间：冬令时 22:30-5:00，夏令时 21:30-4:00
