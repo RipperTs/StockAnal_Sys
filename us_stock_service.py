@@ -96,17 +96,61 @@ class USStockService:
             if end_date is None:
                 end_date = datetime.now().strftime('%Y%m%d')
 
-            # 使用akshare获取美股历史数据
-            # 检查是否需要处理股票代码格式
-            if not stock_code.startswith('105.'):
-                # 如果不是东方财富格式的代码，尝试直接使用stock_us_daily
+            # 处理不同格式的美股代码
+            df = None
+            
+            # 提取干净的股票代码（移除前缀）
+            clean_code = stock_code
+            prefix = None
+            if '.' in stock_code:
+                parts = stock_code.split('.')
+                if len(parts) == 2 and parts[0].isdigit():
+                    prefix = parts[0]
+                    clean_code = parts[1]
+                    self.logger.info(f"从{stock_code}中提取干净代码: {clean_code}, 前缀: {prefix}")
+
+            # 尝试多种方法获取数据
+            methods_tried = []
+            error_messages = []
+
+            # 方法1: 如果原始代码以105.或106.开头，使用stock_us_hist
+            if stock_code.startswith('105.') or stock_code.startswith('106.'):
+                methods_tried.append("stock_us_hist with original code")
                 try:
-                    df = ak.stock_us_daily(symbol=stock_code, adjust="qfq")
-                    self.logger.info(f"使用stock_us_daily获取数据成功: {len(df)}行")
+                    self.logger.info(f"尝试使用stock_us_hist获取数据: {stock_code}")
+                    df = ak.stock_us_hist(
+                        symbol=stock_code,
+                        period="daily",
+                        start_date=start_date,
+                        end_date=end_date,
+                        adjust="qfq"
+                    )
+                    if df is not None and not df.empty:
+                        self.logger.info(f"使用stock_us_hist获取数据成功: {len(df)}行")
                 except Exception as e:
-                    self.logger.warning(f"使用stock_us_daily获取数据失败: {str(e)}, 尝试使用stock_us_hist")
-                    # 如果直接使用stock_code失败，尝试添加东方财富格式的前缀
-                    stock_code_em = f"105.{stock_code}"
+                    error_msg = f"使用stock_us_hist获取{stock_code}数据失败: {str(e)}"
+                    self.logger.warning(error_msg)
+                    error_messages.append(error_msg)
+
+            # 方法2: 使用干净的代码，直接用stock_us_daily
+            if df is None or df.empty:
+                methods_tried.append("stock_us_daily with clean code")
+                try:
+                    self.logger.info(f"尝试使用stock_us_daily获取数据: {clean_code}")
+                    df = ak.stock_us_daily(symbol=clean_code, adjust="qfq")
+                    if df is not None and not df.empty:
+                        self.logger.info(f"使用stock_us_daily获取{clean_code}数据成功: {len(df)}行")
+                except Exception as e:
+                    error_msg = f"使用stock_us_daily获取{clean_code}数据失败: {str(e)}"
+                    self.logger.warning(error_msg)
+                    error_messages.append(error_msg)
+
+            # 方法3: 尝试带105.前缀的stock_us_hist
+            if df is None or df.empty:
+                methods_tried.append("stock_us_hist with 105. prefix")
+                try:
+                    stock_code_em = f"105.{clean_code}"
+                    self.logger.info(f"尝试使用stock_us_hist获取数据: {stock_code_em}")
                     df = ak.stock_us_hist(
                         symbol=stock_code_em,
                         period="daily",
@@ -114,16 +158,37 @@ class USStockService:
                         end_date=end_date,
                         adjust="qfq"
                     )
-            else:
-                # 已经是东方财富格式的代码
-                df = ak.stock_us_hist(
-                    symbol=stock_code,
-                    period="daily",
-                    start_date=start_date,
-                    end_date=end_date,
-                    adjust="qfq"
-                )
-                self.logger.info(f"使用stock_us_hist获取数据成功: {len(df)}行")
+                    if df is not None and not df.empty:
+                        self.logger.info(f"使用stock_us_hist获取{stock_code_em}数据成功: {len(df)}行")
+                except Exception as e:
+                    error_msg = f"使用stock_us_hist获取{stock_code_em}数据失败: {str(e)}"
+                    self.logger.warning(error_msg)
+                    error_messages.append(error_msg)
+
+            # 方法4: 尝试带106.前缀的stock_us_hist
+            if df is None or df.empty:
+                methods_tried.append("stock_us_hist with 106. prefix")
+                try:
+                    stock_code_em = f"106.{clean_code}"
+                    self.logger.info(f"尝试使用stock_us_hist获取数据: {stock_code_em}")
+                    df = ak.stock_us_hist(
+                        symbol=stock_code_em,
+                        period="daily",
+                        start_date=start_date,
+                        end_date=end_date,
+                        adjust="qfq"
+                    )
+                    if df is not None and not df.empty:
+                        self.logger.info(f"使用stock_us_hist获取{stock_code_em}数据成功: {len(df)}行")
+                except Exception as e:
+                    error_msg = f"使用stock_us_hist获取{stock_code_em}数据失败: {str(e)}"
+                    self.logger.warning(error_msg)
+                    error_messages.append(error_msg)
+            
+            # 如果所有方法都失败，抛出汇总错误
+            if df is None or df.empty:
+                self.logger.error(f"所有方法获取{stock_code}数据均失败: {', '.join(methods_tried)}")
+                raise ValueError(f"无法获取美股{stock_code}数据，尝试了以下方法: {', '.join(methods_tried)}。错误信息: {'; '.join(error_messages)}")
 
             # 检查数据格式并标准化
             if '日期' in df.columns:
@@ -186,6 +251,9 @@ class USStockService:
 
             # 缓存数据
             self.data_cache[cache_key] = df.copy()
+            
+            # 记录成功获取的股票代码和方法，以便于调试
+            self.logger.info(f"最终成功获取美股 {stock_code} 数据: {len(df)}行，使用方法: {methods_tried[-1]}")
 
             return df
 
