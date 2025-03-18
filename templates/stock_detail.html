@@ -7,6 +7,13 @@
 
     <div id="alerts-container"></div>
 
+    <!-- 添加市场状态提示区域 -->
+    <div id="market-status-alert" class="alert alert-warning alert-dismissible fade show mb-2" role="alert" style="display: none;">
+        <i class="fas fa-info-circle"></i>
+        <span id="market-status-message"></span>
+        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+    </div>
+
     <!-- 调整布局: 减少垂直方向上的间距 -->
     <div class="d-flex justify-content-between align-items-center mb-1" style="margin-top: 0.2rem; margin-bottom: 0.2rem;">
         <h4 id="stock-title" class="mb-0 fw-bold" style="font-size: 1.1rem; line-height: 1.2;"></h4>
@@ -79,10 +86,6 @@
                                     <div class="mt-1">
                                         <span id="total-score" class="badge rounded-pill score-pill"></span>
                                     </div>
-                                </div>
-                                <div class="mb-2">
-                                    <span class="text-muted small">投资建议:</span>
-                                    <p id="recommendation" class="mb-0 text-strong"></p>
                                 </div>
                             </div>
                             <div class="col-md-6">
@@ -269,29 +272,37 @@
                 break;
                 
             case 'US': // 美股
+                // 检测是否是夏令时
+                // 美国夏令时一般是3月第二个周日到11月第一个周日
+                // 这里使用简化的判断：4月到10月认为是夏令时
+                const month = now.getMonth() + 1; // getMonth() 返回 0-11
+                const isDST = month >= 4 && month <= 10;
+                
                 // 美东时间周一至周五，9:30-16:00
                 // 转换为北京时间：冬令时 22:30-5:00，夏令时 21:30-4:00
-                // 这里简化处理，使用 22:30-5:00
+                const eveningOpenTime = isDST ? 2130 : 2230;
+                const morningCloseTime = isDST ? 400 : 500;
+                
                 if (day >= 1 && day <= 5) {
                     // 当天晚上的交易时间
-                    if (currentTime >= 2230 && currentTime <= 2359) {
+                    if (currentTime >= eveningOpenTime && currentTime <= 2359) {
                         isMarketOpen = true;
                     } 
                     // 次日凌晨的交易时间
-                    else if (day >= 2 && day <= 6 && currentTime >= 0 && currentTime <= 500) {
+                    else if (day >= 2 && day <= 6 && currentTime >= 0 && currentTime <= morningCloseTime) {
                         isMarketOpen = true;
                     }
                     // 其他时间段
-                    else if (day === 1 && currentTime < 2230) {
-                        statusMessage = "美股市场尚未开盘，开盘时间为 22:30 (北京时间)";
-                    } else if ((day >= 2 && day <= 5 && currentTime > 500 && currentTime < 2230) || 
-                              (day === 6 && currentTime > 500)) {
-                        statusMessage = "美股市场已收盘，今日开盘时间为 22:30 (北京时间)";
+                    else if (day === 1 && currentTime < eveningOpenTime) {
+                        statusMessage = `美股市场尚未开盘，开盘时间为 ${isDST ? '21:30' : '22:30'} (北京时间)`;
+                    } else if ((day >= 2 && day <= 5 && currentTime > morningCloseTime && currentTime < eveningOpenTime) || 
+                              (day === 6 && currentTime > morningCloseTime)) {
+                        statusMessage = `美股市场已收盘，今日开盘时间为 ${isDST ? '21:30' : '22:30'} (北京时间)`;
                     }
                 } else if (day === 0) {
-                    statusMessage = "美股市场周末休市，周一 22:30 (北京时间) 开盘";
-                } else if (day === 6 && currentTime > 500) {
-                    statusMessage = "美股市场周末休市，下周一 22:30 (北京时间) 开盘";
+                    statusMessage = `美股市场周末休市，周一 ${isDST ? '21:30' : '22:30'} (北京时间) 开盘`;
+                } else if (day === 6 && currentTime > morningCloseTime) {
+                    statusMessage = `美股市场周末休市，下周一 ${isDST ? '21:30' : '22:30'} (北京时间) 开盘`;
                 }
                 break;
         }
@@ -587,8 +598,12 @@
             const currentPrice = safeGet(analysisResult, 'price_data.current_price', 0);
             const priceChange = safeGet(analysisResult, 'price_data.price_change', 0);
             const priceChangeValue = safeGet(analysisResult, 'price_data.price_change_value', 0);
-
-            $('#stock-price').text('¥' + formatNumber(currentPrice, 2));
+            const marketType = safeGet(analysisResult, 'basic_info.market_type', 'A');
+            
+            // 美股使用$符号，其他市场使用¥符号
+            const currencySymbol = marketType === 'US' ? '$' : '¥';
+            $('#stock-price').text(currencySymbol + formatNumber(currentPrice, 2));
+            
             const priceChangeClass = priceChange >= 0 ? 'trend-up' : 'trend-down';
             const priceChangeIcon = priceChange >= 0 ? '<i class="fas fa-caret-up"></i>' : '<i class="fas fa-caret-down"></i>';
             $('#price-change').html(`<span class="${priceChangeClass}">${priceChangeIcon} ${formatNumber(priceChangeValue, 2)} (${formatPercent(priceChange, 2)})</span>`);

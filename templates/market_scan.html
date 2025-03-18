@@ -14,6 +14,25 @@
                 </div>
                 <div class="card-body">
                     <form id="scan-form" class="row g-3">
+                        <div class="col-md-4 mb-2">
+                            <select class="form-select form-select-sm" id="market-type">
+                                <option value="A" selected>A股</option>
+                                <option value="HK">港股</option>
+                                <option value="US">美股</option>
+                            </select>
+                            <div id="us-stock-note" class="form-text text-muted mt-1" style="display: none;">
+                                <i class="fas fa-info-circle"></i> 美股市场规模大，扫描可能需要更长时间。
+                                <br>建议缩小扫描范围以获得更好的结果。
+                            </div>
+                        </div>
+
+                        <div class="col-md-4 mb-2" id="index-scan-group">
+                            <select class="form-select form-select-sm" id="scan-type">
+                                <option value="all">全部股票</option>
+                                <option value="index" selected>指数成分股</option>
+                                <option value="industry">行业股票</option>
+                            </select>
+                        </div>
                         <div class="col-md-3">
                             <div class="input-group">
                                 <span class="input-group-text">选择指数</span>
@@ -144,6 +163,31 @@
 {% block scripts %}
 <script>
     $(document).ready(function() {
+        // 初始化
+        updateIndexOptions();
+        
+        // 监听市场类型变化
+        $('#market-type').change(function() {
+            const marketType = $(this).val();
+            
+            // 处理美股市场特殊提示
+            if (marketType === 'US') {
+                $('#us-stock-note').show();
+                // 美股暂时只支持全部股票扫描
+                $('#scan-type').val('all');
+                $('#index-scan-group').hide();
+                $('#industry-select-group').hide();
+                $('#index-select-group').hide();
+            } else {
+                $('#us-stock-note').hide();
+                $('#index-scan-group').show();
+                updateScanTypeVisibility();
+            }
+            
+            // 更新指数选项
+            updateIndexOptions();
+        });
+
         // 表单提交
         $('#scan-form').submit(function(e) {
             e.preventDefault();
@@ -271,6 +315,7 @@
             $('#scan-message').html(`正在准备扫描${stockCount}只股票，请稍候...`);
 
             const minScore = parseInt($('#min-score').val() || 60);
+            const marketType = $('#market-type').val();
 
             // 第一步：启动扫描任务
             $.ajax({
@@ -280,7 +325,7 @@
                 data: JSON.stringify({
                     stock_list: stockList,
                     min_score: minScore,
-                    market_type: 'A'
+                    market_type: marketType
                 }),
                 success: function(response) {
                     const taskId = response.task_id;
@@ -520,5 +565,53 @@
         pollScanStatus(taskId, 0);
     }
 
+    // 更新指数选项函数
+    function updateIndexOptions() {
+        const marketType = $('#market-type').val();
+
+        // 清空选项
+        $('#index-selector').empty();
+        $('#index-selector').append('<option value="">-- 选择指数 --</option>');
+
+        // 根据市场类型添加不同的指数选项
+        if (marketType === 'A') {
+            $('#index-selector').append(`
+                <option value="000300">沪深300</option>
+                <option value="000905">中证500</option>
+                <option value="000852">中证1000</option>
+                <option value="000001">上证指数</option>
+            `);
+        } else if (marketType === 'HK') {
+            $('#index-selector').append(`
+                <option value="HSI">恒生指数</option>
+                <option value="HSCEI">国企指数</option>
+            `);
+        } else if (marketType === 'US') {
+            $('#index-selector').append(`
+                <option value="SPX">标普500</option>
+                <option value="DJI">道琼斯工业</option>
+                <option value="IXIC">纳斯达克</option>
+            `);
+        }
+    }
+
+    // 根据选择类型更新界面可见性
+    function updateScanTypeVisibility() {
+        const scanType = $('#scan-type').val();
+        
+        if (scanType === 'index') {
+            $('#index-select-group').show();
+            $('#industry-select-group').hide();
+            $('#custom-select-group').hide();
+        } else if (scanType === 'industry') {
+            $('#index-select-group').hide();
+            $('#industry-select-group').show();
+            $('#custom-select-group').hide();
+        } else {
+            $('#index-select-group').hide();
+            $('#industry-select-group').hide();
+            $('#custom-select-group').show();
+        }
+    }
 </script>
 {% endblock %}

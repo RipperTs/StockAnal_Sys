@@ -433,6 +433,12 @@ def analyze():
                 # 使用线程本地缓存的分析器实例
                 current_analyzer = get_analyzer()
                 result = current_analyzer.quick_analyze_stock(stock_code.strip(), market_type)
+                
+                # 确保推荐是字符串而不是对象
+                if isinstance(result['recommendation'], dict):
+                    result['recommendation'] = result['recommendation'].get('action', '无建议')
+                elif result['recommendation'] is None:
+                    result['recommendation'] = '无建议'
 
                 app.logger.info(
                     f"分析结果: 股票={stock_code}, 名称={result.get('stock_name', '未知')}, 行业={result.get('industry', '未知')}")
@@ -610,6 +616,14 @@ def start_stock_analysis():
                     # 执行分析
                     result = analyzer.perform_enhanced_analysis(stock_code, market_type)
 
+                    # 确保recommendation格式正确
+                    if result and 'recommendation' in result and isinstance(result['recommendation'], dict):
+                        if 'action' in result['recommendation']:
+                            action = result['recommendation']['action']
+                            # 如果action本身是一个对象，提取其文本内容
+                            if isinstance(action, dict) and 'action' in action:
+                                result['recommendation']['action'] = action['action']
+                    
                     # 更新任务状态为完成
                     update_task_status('stock_analysis', task_id, TASK_COMPLETED, progress=100, result=result)
                     app.logger.info(f"分析任务 {task_id} 完成")
@@ -725,6 +739,15 @@ def enhanced_analysis():
             # 同步执行分析
             try:
                 result = analyzer.perform_enhanced_analysis(stock_code, market_type)
+                
+                # 确保recommendation格式正确
+                if result and 'recommendation' in result and isinstance(result['recommendation'], dict):
+                    if 'action' in result['recommendation']:
+                        action = result['recommendation']['action']
+                        # 如果action本身是一个对象，提取其文本内容
+                        if isinstance(action, dict) and 'action' in action:
+                            result['recommendation']['action'] = action['action']
+                
                 update_task_status('stock_analysis', task_id, TASK_COMPLETED, progress=100, result=result)
                 app.logger.info(f"分析完成: {stock_code}，耗时 {time.time() - start_time:.2f} 秒")
                 return custom_jsonify({'result': result})
@@ -799,6 +822,16 @@ def get_stock_data():
         if not stock_code:
             return custom_jsonify({'error': '请提供股票代码'}), 400
 
+        # 特殊处理US股票代码，比如添加105.前缀如果需要
+        original_stock_code = stock_code
+        if market_type == 'US':
+            # 记录美股代码格式
+            app.logger.info(f"处理美股代码: {stock_code}")
+            
+            # 美股代码不需要特殊处理，直接使用原始代码
+            # USStockService内部将处理不同格式的美股代码
+            # 这里只是记录日志以便于调试
+
         # 根据period计算start_date
         end_date = datetime.now().strftime('%Y%m%d')
         if period == '1m':
@@ -853,6 +886,29 @@ def get_stock_data():
         app.logger.error(f"获取股票数据时出错: {str(e)}")
         app.logger.error(traceback.format_exc())
         return custom_jsonify({'error': str(e)}), 500
+
+
+# 添加美股搜索API端点
+@app.route('/api/search_us_stocks', methods=['GET'])
+def api_search_us_stocks():
+    """搜索美股股票"""
+    try:
+        keyword = request.args.get('keyword', '')
+        if not keyword:
+            return jsonify({'error': '请提供搜索关键词'}), 400
+
+        # 使用USStockService搜索美股
+        from us_stock_service import USStockService
+        us_service = USStockService()
+        
+        app.logger.info(f"搜索美股: {keyword}")
+        results = us_service.search_us_stocks(keyword)
+        
+        app.logger.info(f"找到 {len(results)} 条美股匹配结果")
+        return jsonify({'results': results})
+    except Exception as e:
+        app.logger.error(f"搜索美股时出错: {traceback.format_exc()}")
+        return jsonify({'error': str(e)}), 500
 
 
 # @app.route('/api/market_scan', methods=['POST'])
@@ -954,6 +1010,22 @@ def start_market_scan():
                 results = []
                 total = len(stock_list)
                 batch_size = 10
+                
+                # 处理美股代码格式 (如果需要)
+                processed_stock_list = stock_list.copy()
+                if market_type == 'US':
+                    app.logger.info(f"处理美股代码格式 {len(stock_list)} 只股票")
+                    # 清理美股代码，确保格式正确
+                    cleaned_list = []
+                    for code in stock_list:
+                        # 检查是否需要处理美股代码格式
+                        if code.startswith('105.'):
+                            # 已经是东方财富格式，保持不变
+                            cleaned_list.append(code)
+                        else:
+                            # 普通美股代码，确保正确格式
+                            cleaned_list.append(code)
+                    processed_stock_list = cleaned_list
 
                 for i in range(0, total, batch_size):
                     if task_id not in scan_tasks or scan_tasks[task_id]['status'] != TASK_RUNNING:
@@ -961,13 +1033,27 @@ def start_market_scan():
                         app.logger.info(f"扫描任务 {task_id} 被取消")
                         return
 
-                    batch = stock_list[i:i + batch_size]
+                    batch = processed_stock_list[i:i + batch_size]
                     batch_results = []
 
                     for stock_code in batch:
                         try:
-                            report = analyzer.quick_analyze_stock(stock_code, market_type)
+                            # 获取线程本地分析器实例
+                            current_analyzer = get_analyzer()
+                            report = current_analyzer.quick_analyze_stock(stock_code, market_type)
+                            
                             if report['score'] >= min_score:
+                                # 对于美股，确保名称中包含美股标识
+                                if market_type == 'US' and 'stock_name' in report:
+                                    if not report['stock_name'].endswith('(US)'):
+                                        report['stock_name'] = f"{report['stock_name']} (US)"
+                                
+                                # 确保推荐是字符串而不是对象
+                                if isinstance(report['recommendation'], dict):
+                                    report['recommendation'] = report['recommendation'].get('action', '无建议')
+                                elif report['recommendation'] is None:
+                                    report['recommendation'] = '无建议'
+                                
                                 batch_results.append(report)
                         except Exception as e:
                             app.logger.error(f"分析股票 {stock_code} 时出错: {str(e)}")

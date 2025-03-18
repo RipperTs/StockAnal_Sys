@@ -46,6 +46,30 @@
                             </button>
                         </div>
                     </form>
+                    
+                    <!-- 美股搜索区域 -->
+                    <div id="us-stock-search" class="mt-2" style="display: none;">
+                        <div class="input-group input-group-sm">
+                            <span class="input-group-text">搜索美股</span>
+                            <input type="text" class="form-control" id="us-search-input" placeholder="输入公司名称搜索...">
+                            <button class="btn btn-outline-secondary" type="button" id="us-search-btn">
+                                <i class="fas fa-search"></i>
+                            </button>
+                        </div>
+                        <div id="us-search-results" class="mt-1" style="max-height: 200px; overflow-y: auto; display: none;">
+                            <table class="table table-sm table-hover">
+                                <thead>
+                                    <tr>
+                                        <th>股票代码</th>
+                                        <th>公司名称</th>
+                                        <th>价格</th>
+                                        <th>操作</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="us-results-body"></tbody>
+                            </table>
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>
@@ -171,6 +195,100 @@
     let stockData = [];
     let analysisResult = null;
 
+    $(document).ready(function() {
+        // 监听市场类型变化，显示/隐藏美股搜索区域
+        $('#market-type').change(function() {
+            if ($(this).val() === 'US') {
+                $('#us-stock-search').show();
+            } else {
+                $('#us-stock-search').hide();
+                $('#us-search-results').hide();
+            }
+        });
+        
+        // 初始检查，如果默认就是美股则显示搜索区域
+        if ($('#market-type').val() === 'US') {
+            $('#us-stock-search').show();
+        }
+        
+        // 美股搜索按钮点击事件
+        $('#us-search-btn').click(function() {
+            searchUSStocks();
+        });
+        
+        // 美股搜索输入框回车事件
+        $('#us-search-input').keypress(function(e) {
+            if (e.which === 13) {
+                searchUSStocks();
+                return false; // 阻止表单提交
+            }
+        });
+    });
+
+    // 搜索美股功能
+    function searchUSStocks() {
+        const keyword = $('#us-search-input').val().trim();
+        if (!keyword) {
+            showError('请输入搜索关键词');
+            return;
+        }
+        
+        // 显示搜索中提示
+        $('#us-results-body').html('<tr><td colspan="4" class="text-center"><div class="spinner-border spinner-border-sm text-primary me-2"></div>搜索中...</td></tr>');
+        $('#us-search-results').show();
+        
+        // 调用API搜索美股
+        $.ajax({
+            url: `/api/search_us_stocks?keyword=${encodeURIComponent(keyword)}`,
+            type: 'GET',
+            dataType: 'json',
+            success: function(response) {
+                if (response.results && response.results.length > 0) {
+                    renderUSSearchResults(response.results);
+                } else {
+                    $('#us-results-body').html('<tr><td colspan="4" class="text-center">没有找到匹配的美股</td></tr>');
+                }
+            },
+            error: function(xhr, status, error) {
+                let errorMsg = '搜索美股时出错';
+                if (xhr.responseJSON && xhr.responseJSON.error) {
+                    errorMsg += ': ' + xhr.responseJSON.error;
+                } else if (error) {
+                    errorMsg += ': ' + error;
+                }
+                $('#us-results-body').html(`<tr><td colspan="4" class="text-center text-danger">${errorMsg}</td></tr>`);
+            }
+        });
+    }
+    
+    // 渲染美股搜索结果
+    function renderUSSearchResults(results) {
+        let html = '';
+        results.forEach(stock => {
+            html += `
+                <tr>
+                    <td>${stock.symbol}</td>
+                    <td>${stock.name}</td>
+                    <td>${stock.price}</td>
+                    <td>
+                        <button class="btn btn-sm btn-primary select-us-stock" data-symbol="${stock.symbol}">
+                            选择
+                        </button>
+                    </td>
+                </tr>
+            `;
+        });
+        
+        $('#us-results-body').html(html);
+        
+        // 绑定选择按钮事件
+        $('.select-us-stock').click(function() {
+            const symbol = $(this).data('symbol');
+            $('#stock-code').val(symbol);
+            $('#us-search-results').hide();
+        });
+    }
+
     // 提交表单进行分析
     $('#analysis-form').submit(function(e) {
         e.preventDefault();
@@ -235,6 +353,35 @@
 
         // Wrap in paragraph tags for consistent styling
         return '<p class="analysis-para">' + formatted + '</p>';
+    }
+
+    // 错误消息显示
+    function showError(message) {
+        $('#alerts-container').html(`
+            <div class="alert alert-danger alert-dismissible fade show" role="alert">
+                <i class="fas fa-exclamation-circle me-2"></i>${message}
+                <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+            </div>
+        `);
+    }
+
+    // 加载中显示
+    function showLoading() {
+        $('#analysis-result').hide();
+        $('#alerts-container').html(`
+            <div class="alert alert-info alert-dismissible fade show" role="alert">
+                <div class="spinner-border spinner-border-sm text-info me-2" role="status">
+                    <span class="visually-hidden">Loading...</span>
+                </div>
+                正在加载数据，请稍候...
+                <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+            </div>
+        `);
+    }
+
+    // 隐藏加载中
+    function hideLoading() {
+        $('#alerts-container').empty();
     }
 
     // 获取股票数据
@@ -325,8 +472,11 @@
         $('#stock-name').text(analysisResult.basic_info.stock_name + ' (' + analysisResult.basic_info.stock_code + ')');
         $('#stock-info').text(analysisResult.basic_info.industry + ' | ' + analysisResult.basic_info.analysis_date);
 
-        // 渲染价格信息
-        $('#stock-price').text('¥' + formatNumber(analysisResult.price_data.current_price, 2));
+        // 渲染价格信息 - 根据市场类型选择货币符号
+        const marketType = analysisResult.basic_info.market_type || 'A';
+        const currencySymbol = marketType === 'US' ? '$' : '¥';
+        
+        $('#stock-price').text(currencySymbol + formatNumber(analysisResult.price_data.current_price, 2));
         const priceChangeClass = analysisResult.price_data.price_change >= 0 ? 'trend-up' : 'trend-down';
         const priceChangeIcon = analysisResult.price_data.price_change >= 0 ? '<i class="fas fa-caret-up"></i>' : '<i class="fas fa-caret-down"></i>';
         $('#price-change').html(`<span class="${priceChangeClass}">${priceChangeIcon} ${formatNumber(analysisResult.price_data.price_change_value, 2)} (${formatPercent(analysisResult.price_data.price_change, 2)})</span>`);
