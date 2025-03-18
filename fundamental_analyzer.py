@@ -152,16 +152,101 @@ class FundamentalAnalyzer:
             # 获取历年财务数据
             financial_data = ak.stock_financial_abstract(symbol=stock_code)
 
-            # 计算各项成长率
-            revenue = financial_data['营业收入'].astype(float)
-            net_profit = financial_data['净利润'].astype(float)
+            # 检查数据结构
+            if financial_data.empty:
+                raise ValueError(f"未找到股票 {stock_code} 的财务数据")
+                
+            # 新的API数据结构处理
+            # 如果数据包含"指标"列，则使用新格式处理方式
+            if '指标' in financial_data.columns:
+                # 找到"营业总收入"或"营业收入"行
+                revenue_row = financial_data[financial_data['指标'].str.contains('营业总收入|营业收入', na=False)]
+                
+                if revenue_row.empty:
+                    raise ValueError(f"未找到营业收入数据")
+                    
+                # 找到"净利润"行
+                profit_row = financial_data[financial_data['指标'].str.contains('净利润$', na=False)]
+                if profit_row.empty:
+                    # 尝试使用"归母净利润"
+                    profit_row = financial_data[financial_data['指标'].str.contains('归母净利润', na=False)]
+                
+                if profit_row.empty:
+                    raise ValueError(f"未找到净利润数据")
+                
+                # 提取日期列（去掉"选项"和"指标"列）
+                date_cols = [col for col in financial_data.columns if col not in ['选项', '指标']]
+                date_cols.sort(reverse=True)  # 按日期降序排序
+                
+                # 提取收入和利润数据
+                revenue_series = pd.Series(dtype=float)
+                profit_series = pd.Series(dtype=float)
+                
+                # 使用所有日期列获取数据
+                for date in date_cols:
+                    try:
+                        if pd.notna(revenue_row[date].iloc[0]) and revenue_row[date].iloc[0] != '':
+                            rev_value = float(revenue_row[date].iloc[0])
+                            if rev_value > 0:
+                                # 只使用年度数据（以1231结尾）
+                                if date.endswith('1231'):
+                                    year = date[:4]
+                                    revenue_series[year] = rev_value
+                    except (ValueError, TypeError):
+                        continue
+                    
+                    try:
+                        if pd.notna(profit_row[date].iloc[0]) and profit_row[date].iloc[0] != '':
+                            profit_value = float(profit_row[date].iloc[0])
+                            if profit_value != 0:
+                                # 只使用年度数据（以1231结尾）
+                                if date.endswith('1231'):
+                                    year = date[:4]
+                                    profit_series[year] = profit_value
+                    except (ValueError, TypeError):
+                        continue
+            
+            # 旧的API数据结构处理（保留兼容性）
+            else:
+                # 尝试直接从列名读取（旧方式）
+                try:
+                    revenue = financial_data['营业收入'].astype(float)
+                    net_profit = financial_data['净利润'].astype(float)
+                except KeyError:
+                    # 尝试其他可能的列名
+                    try:
+                        revenue = financial_data['营业总收入'].astype(float) if '营业总收入' in financial_data.columns else None
+                        if revenue is None:
+                            revenue = financial_data.filter(like='收入').iloc[:, 0].astype(float)
+                        
+                        net_profit = financial_data['归母净利润'].astype(float) if '归母净利润' in financial_data.columns else None
+                        if net_profit is None:
+                            net_profit = financial_data.filter(like='利润').iloc[:, 0].astype(float)
+                    except:
+                        raise ValueError("无法识别财务数据列名")
+                
+                revenue_series = revenue
+                profit_series = net_profit
 
-            growth = {
-                'revenue_growth_3y': self._calculate_cagr(revenue, 3),
-                'profit_growth_3y': self._calculate_cagr(net_profit, 3),
-                'revenue_growth_5y': self._calculate_cagr(revenue, 5),
-                'profit_growth_5y': self._calculate_cagr(net_profit, 5)
-            }
+            # 使用所有年份数据计算增长率
+            if len(revenue_series) >= 2 or len(profit_series) >= 2:
+                revenue_years = sorted(revenue_series.index, reverse=True)
+                profit_years = sorted(profit_series.index, reverse=True)
+                
+                # 计算各项成长率
+                growth = {
+                    'revenue_growth_3y': self._calculate_annual_growth(revenue_series) if len(revenue_years) >= 2 else 0,
+                    'profit_growth_3y': self._calculate_annual_growth(profit_series) if len(profit_years) >= 2 else 0,
+                    'revenue_growth_5y': self._calculate_annual_growth(revenue_series, 5) if len(revenue_years) >= 2 else 0,
+                    'profit_growth_5y': self._calculate_annual_growth(profit_series, 5) if len(profit_years) >= 2 else 0
+                }
+            else:
+                growth = {
+                    'revenue_growth_3y': 0,
+                    'profit_growth_3y': 0,
+                    'revenue_growth_5y': 0,
+                    'profit_growth_5y': 0
+                }
 
             return growth
         except Exception as e:
@@ -173,6 +258,41 @@ class FundamentalAnalyzer:
                 'revenue_growth_5y': 0,
                 'profit_growth_5y': 0
             }
+            
+    def _calculate_annual_growth(self, series, max_years=3):
+        """计算年均增长率"""
+        if len(series) < 2:
+            return 0
+            
+        try:
+            # 按年份降序排序
+            sorted_series = series.sort_index(ascending=False)
+            
+            # 获取最早和最晚的数据
+            latest_year = sorted_series.index[0]
+            # 如果有足够的数据，使用max_years前的数据；否则使用最早的数据
+            if len(sorted_series) > max_years:
+                earliest_idx = max_years - 1
+            else:
+                earliest_idx = len(sorted_series) - 1
+                
+            earliest_year = sorted_series.index[earliest_idx]
+            
+            latest_value = sorted_series[latest_year]
+            earliest_value = sorted_series[earliest_year]
+            
+            # 计算实际年数
+            actual_years = float(latest_year) - float(earliest_year)
+            
+            if actual_years <= 0 or earliest_value <= 0:
+                return 0
+                
+            # 计算复合年增长率
+            cagr = ((latest_value / earliest_value) ** (1 / actual_years) - 1) * 100
+            return cagr
+        except Exception as e:
+            print(f"计算年均增长率出错: {str(e)}")
+            return 0
 
     def get_us_growth_data(self, stock_code):
         """获取美股成长性数据"""
