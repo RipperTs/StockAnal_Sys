@@ -1273,12 +1273,13 @@ def api_fundamental_analysis():
     try:
         data = request.json
         stock_code = data.get('stock_code')
+        market_type = data.get('market_type', 'A')  # 添加市场类型参数，默认为A股
 
         if not stock_code:
             return jsonify({'error': '请提供股票代码'}), 400
 
-        # 获取基本面分析结果
-        result = fundamental_analyzer.calculate_fundamental_score(stock_code)
+        # 获取基本面分析结果，传递市场类型参数
+        result = fundamental_analyzer.calculate_fundamental_score(stock_code, market_type)
 
         return custom_jsonify(result)
     except Exception as e:
