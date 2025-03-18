@@ -795,9 +795,23 @@ class StockAnalyzer:
             elif market_type == 'US':
                 # 获取美股指数数据
                 try:
-                    # 首先尝试使用sina的API
+                    # 首先尝试使用sina的API (推荐方法，更稳定)
                     self.logger.info(f"尝试使用新浪API获取美股指数 {index_code} 数据")
-                    df = ak.index_us_stock_sina(symbol=index_code)
+                    
+                    # 映射标准指数代码到新浪代码
+                    sina_index_map = {
+                        'SPX': '.INX',  # 标普500
+                        'DJI': '.DJI',  # 道琼斯工业
+                        'IXIC': '.IXIC' # 纳斯达克
+                    }
+                    sina_symbol = sina_index_map.get(index_code, index_code)
+                    
+                    # 如果代码不是以"."开头，而且不在映射表中，可能需要添加"."前缀
+                    if not sina_symbol.startswith('.') and sina_symbol not in sina_index_map.values():
+                        sina_symbol = f".{sina_symbol}"
+                    
+                    self.logger.info(f"转换后的新浪指数代码: {sina_symbol}")
+                    df = ak.index_us_stock_sina(symbol=sina_symbol)
                     
                     # 检查结果是否有效
                     if df is None or df.empty:
@@ -806,62 +820,25 @@ class StockAnalyzer:
                     # 确保列名标准化
                     if 'close' not in df.columns and '收盘价' in df.columns:
                         df = df.rename(columns={'收盘价': 'close'})
+                        
+                    self.logger.info(f"成功获取美股指数 {index_code} 数据: {len(df)}行")
                 except Exception as us_e:
                     self.logger.warning(f"使用新浪API获取美股指数 {index_code} 数据失败: {str(us_e)}")
                     
                     try:
-                        # 尝试使用替代方法 - 东方财富美股指数
-                        self.logger.info(f"尝试使用东方财富获取美股指数 {index_code} 数据")
-                        # 映射标准指数代码到东方财富代码
+                        # 尝试使用stock_us_daily直接获取，这里使用原始代码，但使用正确的映射
+                        self.logger.info(f"尝试使用stock_us_daily获取美股指数 {index_code} 数据")
+                        
+                        # 对于标普500指数，必须使用.INX代码
                         em_index_map = {
-                            'SPX': '.SPX',  # 标普500
+                            'SPX': '.INX',  # 标普500
                             'DJI': '.DJI',  # 道琼斯工业
                             'IXIC': '.IXIC'  # 纳斯达克
                         }
                         
-                        if hasattr(ak, 'stock_us_index_daily'):
-                            # 尝试使用新版API
-                            em_code = em_index_map.get(index_code, f".{index_code}")
-                            self.logger.info(f"使用stock_us_index_daily获取美股指数: {em_code}")
-                            df = ak.stock_us_index_daily(symbol=em_code)
-                        elif hasattr(ak, 'index_investing_global_area_index_name_code'):
-                            # 尝试使用其他投资者API
-                            self.logger.info(f"使用投资者API获取美股指数: {index_code}")
-                            # 获取代码映射表
-                            us_index_map = ak.index_investing_global_area_index_name_code(area="美国", sector="指数")
-                            # 查找对应指数代码
-                            for _, row in us_index_map.iterrows():
-                                if index_code.lower() in row['name'].lower() or index_code in row['name']:
-                                    code = row['code']
-                                    df = ak.index_investing_global_hist(index=code)
-                                    break
-                        elif hasattr(ak, 'stock_us_daily'):
-                            # 尝试使用美股日K线接口作为后备
-                            em_code = {
-                                'SPX': 'SPX',  # 标普500
-                                'DJI': 'DJI',  # 道琼斯工业
-                                'IXIC': 'IXIC'  # 纳斯达克
-                            }.get(index_code, index_code)
-                            self.logger.info(f"使用stock_us_daily获取美股指数: {em_code}")
-                            df = ak.stock_us_daily(symbol=em_code)
-                        elif hasattr(ak, 'stock_us_zh_spot'):
-                            # 尝试使用美股实时行情接口
-                            self.logger.info(f"使用stock_us_zh_spot获取美股指数: {index_code}")
-                            spot_df = ak.stock_us_zh_spot()
-                            # 筛选对应指数
-                            index_map = {
-                                'SPX': 'S&P 500',
-                                'DJI': '道琼斯指数',
-                                'IXIC': '纳斯达克指数'
-                            }
-                            index_name = index_map.get(index_code)
-                            if index_name:
-                                # 找到对应行情数据
-                                filtered = spot_df[spot_df['名称'].str.contains(index_name)]
-                                if not filtered.empty:
-                                    # 只能获取最新数据，这里我们只返回None，而不是生成模拟数据
-                                    self.logger.warning(f"只能获取美股指数 {index_code} 的最新数据，无法获取历史数据")
-                                    return None
+                        em_code = em_index_map.get(index_code, index_code)
+                        self.logger.info(f"使用stock_us_daily获取美股指数: {em_code}")
+                        df = ak.stock_us_daily(symbol=em_code)
                         
                         # 检查结果是否有效
                         if df is None or df.empty:
@@ -873,10 +850,15 @@ class StockAnalyzer:
                                 if col_name in df.columns:
                                     df = df.rename(columns={col_name: 'close'})
                                     break
+                                    
+                        self.logger.info(f"成功使用stock_us_daily获取美股指数 {index_code} 数据: {len(df)}行")
                     except Exception as em_e:
-                        self.logger.error(f"使用东方财富获取美股指数 {index_code} 数据失败: {str(em_e)}")
-                        # 不生成模拟数据，直接返回None
-                        self.logger.warning(f"无法获取美股指数 {index_code} 数据，返回None")
+                        self.logger.error(f"使用stock_us_daily获取美股指数 {index_code} 数据失败: {str(em_e)}")
+                        
+                        # 尝试使用其他备用方法 - 这里仅保留兼容性，但实际场景下可能不需要
+                        self.logger.warning(f"无法获取美股指数 {index_code} 数据，调整市场评分权重")
+                        
+                        # 由于无法获取指数数据，我们调整打分时市场因素的权重
                         return None
             else:
                 raise ValueError(f"不支持的市场类型: {market_type}")
