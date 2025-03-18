@@ -1865,7 +1865,7 @@ class StockAnalyzer:
         }
 
     def calculate_technical_score(self, df):
-        """计算技术面评分 (0-40分)"""
+        """计算技术面评分 (0-40分，标准化为0-100分)"""
         try:
             score = 0
             # 确保有足够的数据
@@ -1974,13 +1974,16 @@ class StockAnalyzer:
             vol_score = min(vol_score, 10)
             score += vol_score
 
-            # 保存各个维度的分数
+            # 将评分标准化为0-100的范围 (原评分最高40分)
+            normalized_score = int(score * 2.5)  # 将40分制转换为100分制
+            
+            # 保存各个维度的分数 (也同样标准化)
             technical_scores = {
-                'total': score,
-                'trend': trend_score,
-                'indicators': indicator_score,
-                'support_resistance': sr_score,
-                'volatility_volume': vol_score
+                'total': normalized_score,
+                'trend': int(trend_score * 2.5),
+                'indicators': int(indicator_score * 2.5),
+                'support_resistance': int(sr_score * 2.5),
+                'volatility_volume': int(vol_score * 2.5)
             }
 
             return technical_scores
