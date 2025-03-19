@@ -1,14 +1,29 @@
+import sys
 import os
 from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime, Text, JSON
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 from datetime import datetime
 
+current_dir = os.path.dirname(os.path.abspath(__file__))
+parent_dir = os.path.dirname(current_dir)
+sys.path.append(parent_dir)
+
 # 读取配置
 DATABASE_URL = os.getenv('DATABASE_URL', 'sqlite:///data/stock_analyzer.db')
 USE_DATABASE = os.getenv('USE_DATABASE', 'False').lower() == 'true'
 
+# 确保数据目录存在
+if DATABASE_URL.startswith('sqlite:///'):
+    db_path = DATABASE_URL.replace('sqlite:///', '')
+    db_dir = os.path.dirname(db_path)
+    
+    if db_dir and not os.path.exists(db_dir):
+        print(f"创建数据库目录: {db_dir}")
+        os.makedirs(db_dir, exist_ok=True)
+
 # 创建引擎
+print(f"连接数据库: {DATABASE_URL}")
 engine = create_engine(DATABASE_URL)
 Base = declarative_base()
 
@@ -89,9 +104,7 @@ Session = sessionmaker(bind=engine)
 
 # 初始化数据库
 def init_db():
-    DEBUG = os.getenv('DEBUG', 'False').lower() == 'true'
-    if DEBUG is False:
-        Base.metadata.create_all(engine)
+    Base.metadata.create_all(engine)
 
 
 # 获取数据库会话

@@ -20,6 +20,9 @@ import math
 import json
 import threading
 
+from db.stock_info_dao import StockInfoDAO
+from service.dfcf.df_us_detail import DFUSDetail
+
 # Thread-local storage
 thread_local = threading.local()
 
@@ -1703,7 +1706,7 @@ class StockAnalyzer:
         try:
             # 检查是否是美股代码 (通常包含字母或者以105.开头)
             is_us_stock = False
-            if stock_code.startswith('105.') or (any(c.isalpha() for c in stock_code) and not stock_code.startswith('0') and not stock_code.startswith('3') and not stock_code.startswith('6')):
+            if stock_code.startswith('105.') or stock_code.startswith('106.') or (any(c.isalpha() for c in stock_code) and not stock_code.startswith('0') and not stock_code.startswith('3') and not stock_code.startswith('6')):
                 is_us_stock = True
                 self.logger.info(f"检测到美股代码: {stock_code}")
             
@@ -1712,31 +1715,13 @@ class StockAnalyzer:
             if is_us_stock:
                 # 美股特殊处理
                 try:
-                    # 使用美股实时行情获取基本信息
-                    us_spot_df = ak.stock_us_spot_em()
-                    
                     # 去掉可能的105.前缀
-                    clean_code = stock_code.replace('105.', '')
-                    
-                    # 尝试匹配股票代码
-                    matched = us_spot_df[us_spot_df['代码'] == clean_code]
-                    if not matched.empty:
-                        info_dict['股票名称'] = matched['名称'].values[0]
-                        info_dict['最新价'] = float(matched['最新价'].values[0])
-                        info_dict['涨跌幅'] = float(matched['涨跌幅'].values[0])
-                        info_dict['总市值'] = float(matched['总市值'].values[0]) if pd.notnull(matched['总市值'].values[0]) else 0
-                        info_dict['市盈率'] = float(matched['市盈率'].values[0]) if pd.notnull(matched['市盈率'].values[0]) else 0
-                        info_dict['行业'] = "美股"
-                        info_dict['地区'] = "美国"
-                        
-                        # 确保名称包含(US)标识
-                        if not info_dict['股票名称'].endswith('(US)'):
-                            info_dict['股票名称'] += ' (US)'
-                    else:
-                        # 如果找不到，提供默认值
-                        info_dict['股票名称'] = f"{clean_code} (US)"
-                        info_dict['行业'] = "美股"
-                        info_dict['地区'] = "美国"
+                    clean_code = stock_code.replace('105.', '').replace('106.', '')
+                    stock_info = StockInfoDAO.find_by_code('US', clean_code.upper())
+
+                    info_dict['股票名称'] = stock_info.stock_name
+                    info_dict['行业'] = stock_info.industry
+                    info_dict['地区'] = "美国"
                 except Exception as us_e:
                     self.logger.error(f"获取美股信息时出错: {str(us_e)}")
                     # 提供美股默认信息，避免出错
