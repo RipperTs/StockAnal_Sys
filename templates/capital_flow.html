@@ -27,7 +27,8 @@
                             <div class="input-group input-group-sm">
                                 <span class="input-group-text">周期</span>
                                 <select class="form-select" id="period-select">
-                                    <option value="10日排行" selected>10日排行</option>
+                                    <option value="90日排行" selected>90日排行</option>
+                                    <option value="10日排行">10日排行</option>
                                     <option value="5日排行">5日排行</option>
                                     <option value="3日排行">3日排行</option>
                                 </select>
@@ -763,7 +764,8 @@
         } else {
             // 概念资金流选项
             periodSelect.innerHTML = `
-                <option value="10日排行" selected>10日排行</option>
+                <option value="90日排行" selected>90日排行</option>
+                <option value="10日排行">10日排行</option>
                 <option value="5日排行">5日排行</option>
                 <option value="3日排行">3日排行</option>
             `;

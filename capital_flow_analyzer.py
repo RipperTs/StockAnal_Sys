@@ -200,14 +200,6 @@ class CapitalFlowAnalyzer:
         try:
             self.logger.info(f"Getting stocks for sector: {sector}")
 
-            # Check cache
-            cache_key = f"sector_stocks_{sector}"
-            if cache_key in self.data_cache:
-                cache_time, cached_data = self.data_cache[cache_key]
-                # If cached within the last hour, return cached data
-                if (datetime.now() - cache_time).total_seconds() < 3600:
-                    return cached_data
-
             # Try to get data from akshare
             try:
                 # For industry sectors (using 东方财富 interface)
@@ -232,22 +224,18 @@ class CapitalFlowAnalyzer:
                             continue
 
                     # Cache the result
-                    self.data_cache[cache_key] = (datetime.now(), result)
                     return result
             except Exception as e:
                 self.logger.warning(f"Failed to get sector stocks from API: {str(e)}")
                 # Fall through to mock data
 
-            # If we reach here, we couldn't get data from API, return mock data
-            result = self._generate_mock_sector_stocks(sector)
-            self.data_cache[cache_key] = (datetime.now(), result)
-            return result
+            return []
 
         except Exception as e:
             self.logger.error(f"Error getting sector stocks: {str(e)}")
             self.logger.error(traceback.format_exc())
             # Return mock data if API fails
-            return self._generate_mock_sector_stocks(sector)
+            return []
 
     def calculate_capital_flow_score(self, stock_code, market_type=""):
         """Calculate capital flow score for a stock"""
