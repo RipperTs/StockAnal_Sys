@@ -1,13 +1,14 @@
-# capital_flow_analyzer.py
 import logging
 import traceback
 import akshare as ak
-import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
 
 
 class CapitalFlowAnalyzer:
+    """
+    资金流向分析
+    """
     def __init__(self):
         self.data_cache = {}
 

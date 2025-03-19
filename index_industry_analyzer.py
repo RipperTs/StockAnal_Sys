@@ -1,11 +1,12 @@
-# index_industry_analyzer.py
 import akshare as ak
 import pandas as pd
-import numpy as np
 import threading
 
 
 class IndexIndustryAnalyzer:
+    """
+    指数和行业分析器
+    """
     def __init__(self, analyzer):
         self.analyzer = analyzer
         self.data_cache = {}

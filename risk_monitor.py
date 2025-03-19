@@ -1,16 +1,11 @@
-# -*- coding: utf-8 -*-
-"""
-智能分析系统（股票） - 股票市场数据分析系统
-开发者：熊猫大侠
-版本：v2.1.0
-许可证：MIT License
-"""
-# risk_monitor.py
 import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
 
 class RiskMonitor:
+    """
+    风险监控器，用于分析股票和投资组合的风险
+    """
     def __init__(self, analyzer):
         self.analyzer = analyzer
 

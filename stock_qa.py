@@ -1,15 +1,10 @@
-# -*- coding: utf-8 -*-
-"""
-智能分析系统（股票） - 股票市场数据分析系统
-开发者：熊猫大侠
-版本：v2.1.0
-许可证：MIT License
-"""
-# stock_qa.py
 import os
 import openai
 
 class StockQA:
+    """
+    股票智能问答系统
+    """
     def __init__(self, analyzer, openai_api_key=None, openai_model=None):
         self.analyzer = analyzer
         self.openai_api_key = os.getenv('OPENAI_API_KEY', os.getenv('OPENAI_API_KEY'))

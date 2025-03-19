@@ -1,10 +1,3 @@
-# -*- coding: utf-8 -*-
-"""
-智能分析系统（股票） - 股票市场数据分析系统
-修改：熊猫大侠
-版本：v2.1.0
-"""
-# us_stock_service.py
 import akshare as ak
 import pandas as pd
 import logging
@@ -12,6 +5,9 @@ from datetime import datetime, timedelta
 
 
 class USStockService:
+    """
+    美股数据服务
+    """
     def __init__(self):
         logging.basicConfig(level=logging.INFO,
                             format='%(asctime)s - %(levelname)s - %(message)s')

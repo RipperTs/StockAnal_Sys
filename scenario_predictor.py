@@ -1,21 +1,12 @@
-# -*- coding: utf-8 -*-
-"""
-智能分析系统（股票） - 股票市场数据分析系统
-开发者：熊猫大侠
-版本：v2.1.0
-许可证：MIT License
-"""
-# scenario_predictor.py
 import os
 import numpy as np
-import pandas as pd
 from datetime import datetime, timedelta
 import openai
-"""
-
-"""
 
 class ScenarioPredictor:
+    """
+    情景预测器，用于生成股票的乐观、中性、悲观三种市场情景预测
+    """
     def __init__(self, analyzer, openai_api_key=None, openai_model=None):
         self.analyzer = analyzer
         self.openai_api_key = os.getenv('OPENAI_API_KEY', os.getenv('OPENAI_API_KEY'))

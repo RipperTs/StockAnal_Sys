@@ -1,20 +1,14 @@
-# -*- coding: utf-8 -*-
-"""
-智能分析系统（股票） - 股票市场数据分析系统
-开发者：熊猫大侠
-版本：v2.1.0
-许可证：MIT License
-"""
-# industry_analyzer.py
 import logging
 import random
 import akshare as ak
 import pandas as pd
-import numpy as np
 from datetime import datetime, timedelta
 
 
 class IndustryAnalyzer:
+    """
+    行业分析器
+    """
     def __init__(self):
         self.data_cache = {}
         self.industry_code_map = {}  # Cache for industry name to code mapping
