@@ -1,17 +1,8 @@
-# -*- coding: utf-8 -*-
-"""
-智能分析系统（股票） - 股票市场数据分析系统
-修改：熊猫大侠
-版本：v2.1.0
-"""
-# web_server.py
-
 import numpy as np
 import pandas as pd
-from flask import Flask, render_template, request, jsonify, redirect, url_for
-from stock_analyzer import StockAnalyzer
-from us_stock_service import USStockService
-import threading
+from flask import Flask, render_template, request, jsonify
+from service.stock_analyzer import StockAnalyzer
+from service.us_stock_service import USStockService
 import logging
 from logging.handlers import RotatingFileHandler
 import traceback
@@ -26,7 +17,7 @@ import sys
 from flask_swagger_ui import get_swaggerui_blueprint
 from database import get_session, AnalysisResult, USE_DATABASE, init_db
 from dotenv import load_dotenv
-from industry_analyzer import IndustryAnalyzer
+from service.industry_analyzer import IndustryAnalyzer
 
 # 加载环境变量
 load_dotenv()
@@ -42,7 +33,7 @@ swaggerui_blueprint = get_swaggerui_blueprint(
     SWAGGER_URL,
     API_URL,
     config={
-        'app_name': "股票智能分析系统 API文档"
+        'app_name': "量化智能分析系统 API文档"
     }
 )
 
@@ -73,7 +64,7 @@ app.register_blueprint(swaggerui_blueprint, url_prefix=SWAGGER_URL)
 # 确保全局变量在重新加载时不会丢失
 if 'analyzer' not in globals():
     try:
-        from stock_analyzer import StockAnalyzer
+        from service.stock_analyzer import StockAnalyzer
 
         analyzer = StockAnalyzer()
         print("成功初始化全局StockAnalyzer实例")
@@ -82,12 +73,12 @@ if 'analyzer' not in globals():
         raise
 
 # 导入新模块
-from fundamental_analyzer import FundamentalAnalyzer
-from capital_flow_analyzer import CapitalFlowAnalyzer
-from scenario_predictor import ScenarioPredictor
-from stock_qa import StockQA
-from risk_monitor import RiskMonitor
-from index_industry_analyzer import IndexIndustryAnalyzer
+from service.fundamental_analyzer import FundamentalAnalyzer
+from service.capital_flow_analyzer import CapitalFlowAnalyzer
+from service.scenario_predictor import ScenarioPredictor
+from service.stock_qa import StockQA
+from service.risk_monitor import RiskMonitor
+from service.index_industry_analyzer import IndexIndustryAnalyzer
 
 # 初始化模块实例
 fundamental_analyzer = FundamentalAnalyzer()
@@ -475,7 +466,7 @@ def api_north_flow_history():
             return jsonify({'error': '请提供股票代码'}), 400
 
         # 调用北向资金历史数据方法
-        from capital_flow_analyzer import CapitalFlowAnalyzer
+        from service.capital_flow_analyzer import CapitalFlowAnalyzer
 
         analyzer = CapitalFlowAnalyzer()
         result = analyzer.get_north_flow_history(stock_code, start_date, end_date)
@@ -710,6 +701,7 @@ def cancel_analysis(task_id):
 def enhanced_analysis():
     """原增强分析API的向后兼容版本"""
     try:
+        store = []
         data = request.json
         stock_code = data.get('stock_code')
         market_type = data.get('market_type', 'A')
@@ -898,7 +890,7 @@ def api_search_us_stocks():
             return jsonify({'error': '请提供搜索关键词'}), 400
 
         # 使用USStockService搜索美股
-        from us_stock_service import USStockService
+        from service.us_stock_service import USStockService
         us_service = USStockService()
         
         app.logger.info(f"搜索美股: {keyword}")
