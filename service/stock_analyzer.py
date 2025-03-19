@@ -88,7 +88,7 @@ class StockAnalyzer:
                 )
             elif market_type == 'US':
                 # 使用专门的US股票服务获取美股数据
-                from us_stock_service import USStockService
+                from service.us_stock_service import USStockService
                 us_service = USStockService()
                 
                 try:

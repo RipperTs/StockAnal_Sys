@@ -18,6 +18,7 @@ from flask_swagger_ui import get_swaggerui_blueprint
 from database import get_session, AnalysisResult, USE_DATABASE, init_db
 from dotenv import load_dotenv
 from service.industry_analyzer import IndustryAnalyzer
+import concurrent.futures
 
 # 加载环境变量
 load_dotenv()
@@ -1130,8 +1131,36 @@ def get_popular_us_stocks():
         # 使用akshare获取知名美股列表
         app.logger.info("获取知名美股列表")
         try:
-            famous_stocks = ak.stock_us_famous_spot_em()
-            # 提取股票代码列表
+            # 定义所有需要查询的股票类别
+            stock_categories = ["科技类", "金融类", "医药食品类", "媒体类", "汽车能源类", "制造零售类"]
+            
+            # 定义查询函数
+            def fetch_stock_data(category):
+                return ak.stock_us_famous_spot_em(category)
+            
+            # 使用线程池并行查询
+            all_famous_stocks = []
+            with concurrent.futures.ThreadPoolExecutor(max_workers=len(stock_categories)) as executor:
+                # 提交所有任务并获取future对象
+                future_to_category = {executor.submit(fetch_stock_data, category): category for category in stock_categories}
+                
+                # 收集结果
+                for future in concurrent.futures.as_completed(future_to_category):
+                    category = future_to_category[future]
+                    try:
+                        result = future.result()
+                        if result is not None and not result.empty:
+                            all_famous_stocks.append(result)
+                    except Exception as e:
+                        app.logger.error(f"获取{category}股票数据时出错: {e}")
+            
+            # 合并所有结果
+            if all_famous_stocks:
+                famous_stocks = pd.concat(all_famous_stocks, ignore_index=True)
+            else:
+                famous_stocks = pd.DataFrame()
+            
+            # 现在famous_stocks包含了所有类别的股票数据
             stock_list = famous_stocks['代码'].tolist() if '代码' in famous_stocks.columns else []
             app.logger.info(f"找到 {len(stock_list)} 只知名美股")
             
