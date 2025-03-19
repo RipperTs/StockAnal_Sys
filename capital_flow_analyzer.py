@@ -228,7 +228,6 @@ class CapitalFlowAnalyzer:
             except Exception as e:
                 self.logger.warning(f"Failed to get sector stocks from API: {str(e)}")
                 # Fall through to mock data
-
             return []
 
         except Exception as e:
@@ -373,7 +372,7 @@ class CapitalFlowAnalyzer:
         # self.logger.warning(f"Generating mock concept fund flow data for period: {period}")
 
         sectors = [
-            "新能源", "医药", "半导体", "芯片", "人工智能", "大数据", "云计算", "5G",
+            "新能源", "医药商业", "半导体", "芯片", "人工智能", "大数据", "云计算", "5G",
             "汽车", "消费", "金融", "互联网", "游戏", "农业", "化工", "建筑", "军工",
             "钢铁", "有色金属", "煤炭", "石油"
         ]
@@ -544,30 +543,3 @@ class CapitalFlowAnalyzer:
         }
 
         return result
-
-    def _generate_mock_sector_stocks(self, sector):
-        """Generate mock stocks for a sector"""
-        # self.logger.warning(f"Generating mock sector stocks for: {sector}")
-
-        # Number of stocks to generate
-        num_stocks = np.random.randint(20, 50)
-
-        result = []
-        for i in range(num_stocks):
-            prefix = "6" if np.random.random() > 0.5 else "0"
-            stock_code = prefix + str(100000 + i).zfill(5)[-5:]
-
-            change_percent = round(np.random.uniform(-5, 5), 2)
-
-            item = {
-                "code": stock_code,
-                "name": f"{sector}股票{i + 1}",
-                "price": round(np.random.uniform(10, 100), 2),
-                "change_percent": change_percent,
-                "main_net_inflow": round(np.random.uniform(-1e6, 1e6), 2),
-                "main_net_inflow_percent": round(np.random.uniform(-5, 5), 2)
-            }
-            result.append(item)
-
-        # Sort by main net inflow (descending)
-        return sorted(result, key=lambda x: x["main_net_inflow"], reverse=True)

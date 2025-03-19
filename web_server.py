@@ -1290,7 +1290,7 @@ def api_fundamental_analysis():
 @app.route('/api/concept_fund_flow', methods=['GET'])
 def api_concept_fund_flow():
     try:
-        period = request.args.get('period', '10日排行')  # Default to 10-day ranking
+        period = request.args.get('period', '90日排行')  # Default to 10-day ranking
 
         # Get concept fund flow data
         result = capital_flow_analyzer.get_concept_fund_flow(period)
