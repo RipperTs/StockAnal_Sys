@@ -72,7 +72,7 @@ if __name__ == '__main__':
                     batch_data = []
 
             page += 1
-            time.sleep(3)  # 休眠3秒，避免请求过于频繁被封IP
+            time.sleep(1)  # 休眠3秒，避免请求过于频繁被封IP
 
         # 提交剩余的数据
         if batch_data:
