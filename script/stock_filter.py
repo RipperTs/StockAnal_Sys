@@ -365,18 +365,29 @@ def filter_stocks(min_pe=5, max_pe=50, market_type="US", strategies=None, output
         # 写入文件头
         for key, file in file_handlers.items():
             file.write(f"筛选条件: PE介于{min_pe}和{max_pe}之间的{market_type}股票\n")
-            file.write("股票代码, 股票名称, PE\n")
+            if key == "all_strategies":
+                file.write("股票代码, 股票名称, PE, 策略1(放量), 策略2(回调), 策略3(回测)\n")
+            else:
+                file.write("股票代码, 股票名称, PE\n")
             file.flush()
     
     total_stocks = len(pe_filtered_stocks)
     for i, stock in enumerate(pe_filtered_stocks):
         print(f"处理进度: {i+1}/{total_stocks} - 当前股票: {stock.stock_code} ({stock.stock_name})")
         
+        # 检查每个策略
+        strategy_results = {
+            "volume_surge": False,
+            "pullback_50": False,
+            "initial_pullback_20": False
+        }
+        
         matched_strategies = []
         
         if "volume_surge" in strategies and filter_by_volume_surge(stock):
             result["volume_surge"].append(stock)
             matched_strategies.append("volume_surge")
+            strategy_results["volume_surge"] = True
             
             # 如果有文件输出，则立即写入
             if output_dir and "volume_surge" in file_handlers:
@@ -386,6 +397,7 @@ def filter_stocks(min_pe=5, max_pe=50, market_type="US", strategies=None, output
         if "pullback_50" in strategies and filter_by_pullback_50_percent(stock):
             result["pullback_50"].append(stock)
             matched_strategies.append("pullback_50")
+            strategy_results["pullback_50"] = True
             
             # 如果有文件输出，则立即写入
             if output_dir and "pullback_50" in file_handlers:
@@ -395,6 +407,7 @@ def filter_stocks(min_pe=5, max_pe=50, market_type="US", strategies=None, output
         if "initial_pullback_20" in strategies and filter_by_initial_pullback_20_percent(stock):
             result["initial_pullback_20"].append(stock)
             matched_strategies.append("initial_pullback_20")
+            strategy_results["initial_pullback_20"] = True
             
             # 如果有文件输出，则立即写入
             if output_dir and "initial_pullback_20" in file_handlers:
@@ -407,7 +420,10 @@ def filter_stocks(min_pe=5, max_pe=50, market_type="US", strategies=None, output
             
             # 如果有文件输出，则立即写入
             if output_dir and "all_strategies" in file_handlers:
-                file_handlers["all_strategies"].write(f"{stock.stock_code}, {stock.stock_name}, {stock.pe_ratio}\n")
+                file_handlers["all_strategies"].write(
+                    f"{stock.stock_code}, {stock.stock_name}, {stock.pe_ratio}, "
+                    f"{strategy_results['volume_surge']}, {strategy_results['pullback_50']}, {strategy_results['initial_pullback_20']}\n"
+                )
                 file_handlers["all_strategies"].flush()  # 确保立即写入磁盘
     
     # 关闭所有文件
@@ -431,7 +447,7 @@ if __name__ == "__main__":
     print("开始筛选股票...")
     
     # 测试单个股票的数据获取 - 用于调试
-    test_mode = True
+    test_mode = False
     if test_mode:
         try:
             # 测试图中的股票
@@ -489,8 +505,15 @@ if __name__ == "__main__":
                             self.pe_ratio = 10.0
                     
                     mock_stock = MockStock(test_stock_code)
-                    is_matched = filter_by_volume_surge(mock_stock)
-                    print(f"是否符合放量策略: {is_matched}")
+                    
+                    # 检查是否符合各个策略
+                    is_volume_surge = filter_by_volume_surge(mock_stock)
+                    is_pullback_50 = filter_by_pullback_50_percent(mock_stock)
+                    is_initial_pullback_20 = filter_by_initial_pullback_20_percent(mock_stock)
+                    
+                    print(f"符合策略1(历史底部放量): {is_volume_surge}")
+                    print(f"符合策略2(翻倍回调50%): {is_pullback_50}")
+                    print(f"符合策略3(初升段回测20%): {is_initial_pullback_20}")
                 else:
                     print("获取历史数据失败")
             sys.exit(0)
