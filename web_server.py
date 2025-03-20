@@ -1,6 +1,8 @@
 import numpy as np
 import pandas as pd
 from flask import Flask, render_template, request, jsonify
+
+from config import DEBUG, PORT, USE_REDIS_CACHE, REDIS_URL, OPENAI_API_KEY, OPENAI_API_MODEL
 from service.stock_analyzer import StockAnalyzer
 from service.us_stock_service import USStockService
 import logging
@@ -19,9 +21,6 @@ from database import get_session, AnalysisResult, USE_DATABASE, init_db
 from dotenv import load_dotenv
 from service.industry_analyzer import IndustryAnalyzer
 import concurrent.futures
-
-# 加载环境变量
-load_dotenv()
 
 # 检查是否需要初始化数据库
 if USE_DATABASE:
@@ -50,10 +49,10 @@ cache_config = {
 }
 
 # 如果配置了Redis，使用Redis作为缓存后端
-if os.getenv('USE_REDIS_CACHE', 'False').lower() == 'true' and os.getenv('REDIS_URL'):
+if USE_REDIS_CACHE and REDIS_URL:
     cache_config = {
         'CACHE_TYPE': 'RedisCache',
-        'CACHE_REDIS_URL': os.getenv('REDIS_URL'),
+        'CACHE_REDIS_URL': REDIS_URL,
         'CACHE_DEFAULT_TIMEOUT': 300
     }
 
@@ -84,8 +83,8 @@ from service.index_industry_analyzer import IndexIndustryAnalyzer
 # 初始化模块实例
 fundamental_analyzer = FundamentalAnalyzer()
 capital_flow_analyzer = CapitalFlowAnalyzer()
-scenario_predictor = ScenarioPredictor(analyzer, os.getenv('OPENAI_API_KEY'), os.getenv('OPENAI_API_MODEL'))
-stock_qa = StockQA(analyzer, os.getenv('OPENAI_API_KEY'), os.getenv('OPENAI_API_MODEL'))
+scenario_predictor = ScenarioPredictor(analyzer, OPENAI_API_KEY, OPENAI_API_MODEL)
+stock_qa = StockQA(analyzer, OPENAI_API_KEY, OPENAI_API_MODEL)
 risk_monitor = RiskMonitor(analyzer)
 index_industry_analyzer = IndexIndustryAnalyzer(analyzer)
 industry_analyzer = IndustryAnalyzer()
@@ -425,7 +424,7 @@ def analyze():
                 # 使用线程本地缓存的分析器实例
                 current_analyzer = get_analyzer()
                 result = current_analyzer.quick_analyze_stock(stock_code.strip(), market_type)
-                
+
                 # 确保推荐是字符串而不是对象
                 if isinstance(result['recommendation'], dict):
                     result['recommendation'] = result['recommendation'].get('action', '无建议')
@@ -615,7 +614,7 @@ def start_stock_analysis():
                             # 如果action本身是一个对象，提取其文本内容
                             if isinstance(action, dict) and 'action' in action:
                                 result['recommendation']['action'] = action['action']
-                    
+
                     # 更新任务状态为完成
                     update_task_status('stock_analysis', task_id, TASK_COMPLETED, progress=100, result=result)
                     app.logger.info(f"分析任务 {task_id} 完成")
@@ -732,7 +731,7 @@ def enhanced_analysis():
             # 同步执行分析
             try:
                 result = analyzer.perform_enhanced_analysis(stock_code, market_type)
-                
+
                 # 确保recommendation格式正确
                 if result and 'recommendation' in result and isinstance(result['recommendation'], dict):
                     if 'action' in result['recommendation']:
@@ -740,7 +739,7 @@ def enhanced_analysis():
                         # 如果action本身是一个对象，提取其文本内容
                         if isinstance(action, dict) and 'action' in action:
                             result['recommendation']['action'] = action['action']
-                
+
                 update_task_status('stock_analysis', task_id, TASK_COMPLETED, progress=100, result=result)
                 app.logger.info(f"分析完成: {stock_code}，耗时 {time.time() - start_time:.2f} 秒")
                 return custom_jsonify({'result': result})
@@ -820,7 +819,7 @@ def get_stock_data():
         if market_type == 'US':
             # 记录美股代码格式
             app.logger.info(f"处理美股代码: {stock_code}")
-            
+
             # 美股代码不需要特殊处理，直接使用原始代码
             # USStockService内部将处理不同格式的美股代码
             # 这里只是记录日志以便于调试
@@ -893,10 +892,10 @@ def api_search_us_stocks():
         # 使用USStockService搜索美股
         from service.us_stock_service import USStockService
         us_service = USStockService()
-        
+
         app.logger.info(f"搜索美股: {keyword}")
         results = us_service.search_us_stocks(keyword)
-        
+
         app.logger.info(f"找到 {len(results)} 条美股匹配结果")
         return jsonify({'results': results})
     except Exception as e:
@@ -949,7 +948,7 @@ def start_market_scan():
                 results = []
                 total = len(stock_list)
                 batch_size = 10
-                
+
                 # 处理美股代码格式 (如果需要)
                 processed_stock_list = stock_list.copy()
                 if market_type == 'US':
@@ -980,19 +979,19 @@ def start_market_scan():
                             # 获取线程本地分析器实例
                             current_analyzer = get_analyzer()
                             report = current_analyzer.quick_analyze_stock(stock_code, market_type)
-                            
+
                             if report['score'] >= min_score:
                                 # 对于美股，确保名称中包含美股标识
                                 if market_type == 'US' and 'stock_name' in report:
                                     if not report['stock_name'].endswith('(US)'):
                                         report['stock_name'] = f"{report['stock_name']} (US)"
-                                
+
                                 # 确保推荐是字符串而不是对象
                                 if isinstance(report['recommendation'], dict):
                                     report['recommendation'] = report['recommendation'].get('action', '无建议')
                                 elif report['recommendation'] is None:
                                     report['recommendation'] = '无建议'
-                                
+
                                 batch_results.append(report)
                         except Exception as e:
                             app.logger.error(f"分析股票 {stock_code} 时出错: {str(e)}")
@@ -1082,6 +1081,19 @@ def cancel_scan(task_id):
         return jsonify({'message': '任务已取消'})
 
 
+@app.route('/api/stocks_news', methods=['GET'])
+def get_stock_news():
+    """
+    获取股票新闻
+    """
+    index_code = request.args.get('stock_code', '000300')  # 默认沪深300
+    market_type = request.args.get('market_type', 'A')  # 获取市场类型
+    limit = request.args.get('limit', 10)  # 默认10条新闻
+
+    response = analyzer.get_stock_news(index_code, market_type, limit)
+    return jsonify(response)
+
+
 @app.route('/api/index_stocks', methods=['GET'])
 def get_index_stocks():
     """获取指数成分股"""
@@ -1127,23 +1139,24 @@ def get_popular_us_stocks():
     """获取热门美股列表"""
     try:
         import akshare as ak
-        
+
         # 使用akshare获取知名美股列表
         app.logger.info("获取知名美股列表")
         try:
             # 定义所有需要查询的股票类别
             stock_categories = ["科技类", "金融类", "医药食品类", "媒体类", "汽车能源类", "制造零售类"]
-            
+
             # 定义查询函数
             def fetch_stock_data(category):
                 return ak.stock_us_famous_spot_em(category)
-            
+
             # 使用线程池并行查询
             all_famous_stocks = []
             with concurrent.futures.ThreadPoolExecutor(max_workers=len(stock_categories)) as executor:
                 # 提交所有任务并获取future对象
-                future_to_category = {executor.submit(fetch_stock_data, category): category for category in stock_categories}
-                
+                future_to_category = {executor.submit(fetch_stock_data, category): category for category in
+                                      stock_categories}
+
                 # 收集结果
                 for future in concurrent.futures.as_completed(future_to_category):
                     category = future_to_category[future]
@@ -1153,17 +1166,17 @@ def get_popular_us_stocks():
                             all_famous_stocks.append(result)
                     except Exception as e:
                         app.logger.error(f"获取{category}股票数据时出错: {e}")
-            
+
             # 合并所有结果
             if all_famous_stocks:
                 famous_stocks = pd.concat(all_famous_stocks, ignore_index=True)
             else:
                 famous_stocks = pd.DataFrame()
-            
+
             # 现在famous_stocks包含了所有类别的股票数据
             stock_list = famous_stocks['代码'].tolist() if '代码' in famous_stocks.columns else []
             app.logger.info(f"找到 {len(stock_list)} 只知名美股")
-            
+
             # 如果返回的列表为空或获取失败，使用备用列表
             if not stock_list:
                 raise Exception("获取知名美股列表为空")
@@ -1172,21 +1185,22 @@ def get_popular_us_stocks():
             # 备用的热门美股列表
             stock_list = [
                 # 科技股
-                'AAPL', 'MSFT', 'GOOGL', 'AMZN', 'META', 'TSLA', 'NVDA', 'NFLX', 
+                'AAPL', 'MSFT', 'GOOGL', 'AMZN', 'META', 'TSLA', 'NVDA', 'NFLX',
                 # 金融股
-                'JPM', 'BAC', 'WFC', 'GS', 
+                'JPM', 'BAC', 'WFC', 'GS',
                 # 医疗保健
-                'JNJ', 'PFE', 'MRK', 
+                'JNJ', 'PFE', 'MRK',
                 # 消费品
                 'KO', 'PEP', 'WMT', 'MCD',
                 # 半导体
                 'AMD', 'INTC', 'TSM', 'QCOM'
             ]
-        
+
         return jsonify({'stock_list': stock_list})
     except Exception as e:
         app.logger.error(f"获取热门美股列表时出错: {traceback.format_exc()}")
         return jsonify({'error': str(e)}), 500
+
 
 @app.route('/api/industry_stocks', methods=['GET'])
 def get_industry_stocks():
@@ -1198,7 +1212,7 @@ def get_industry_stocks():
 
         if not industry:
             return jsonify({'error': '请提供行业名称'}), 400
-            
+
         # 检查市场类型
         if market_type == 'US':
             app.logger.warning(f"美股市场暂不支持行业筛选: {industry}")
@@ -1638,5 +1652,4 @@ cleaner_thread.daemon = True
 cleaner_thread.start()
 
 if __name__ == '__main__':
-    DEBUG = os.getenv('DEBUG', 'False').lower() == 'true'
-    app.run(host='0.0.0.0', port=8888, debug=DEBUG)
+    app.run(host='0.0.0.0', port=PORT, debug=DEBUG)

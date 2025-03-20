@@ -8,6 +8,7 @@ import logging
 import math
 import threading
 
+from config import OPENAI_API_KEY, OPENAI_API_URL, OPENAI_API_MODEL, NEWS_MODEL
 from db.stock_info_dao import StockInfoDAO
 
 # Thread-local storage
@@ -29,10 +30,10 @@ class StockAnalyzer:
         load_dotenv()
 
         # 设置 OpenAI API (原来是Gemini API)
-        self.openai_api_key = os.getenv('OPENAI_API_KEY', os.getenv('OPENAI_API_KEY'))
-        self.openai_api_url = os.getenv('OPENAI_API_URL', 'https://api.openai.com/v1')
-        self.openai_model = os.getenv('OPENAI_API_MODEL', 'gemini-2.0-pro-exp-02-05')
-        self.news_model = os.getenv('NEWS_MODEL')
+        self.openai_api_key = OPENAI_API_KEY
+        self.openai_api_url = OPENAI_API_URL
+        self.openai_model = OPENAI_API_MODEL
+        self.news_model = NEWS_MODEL
 
         # 配置参数
         self.params = {
