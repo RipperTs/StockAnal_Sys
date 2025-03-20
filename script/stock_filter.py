@@ -99,18 +99,19 @@ def get_stock_history(stock_code, period="5y"):
         return None
 
 
-def filter_by_volume_surge(stock_info, min_volume_ratio=2.5, lookback_days=63):
+def filter_by_volume_surge(stock_info, min_volume_ratio=2.5, min_price=5.0):
     """
     策略1: 历史底部区域附近出现持续放量
     检测特征:
     1. 处于历史底部区域(30%以内)
-    2. 最近期间出现明显持续放量
+    2. 最近两周(10个交易日)出现明显持续放量
     3. 股价形态开始走稳或有小幅上涨趋势
+    4. 当前股价大于5美元
     
     Args:
         stock_info (StockInfo): 股票信息
         min_volume_ratio (float): 放量倍数(相对于之前均值)
-        lookback_days (int): 往回看多少个交易日
+        min_price (float): 最小股价(美元)
         
     Returns:
         bool: 是否符合条件
@@ -126,6 +127,11 @@ def filter_by_volume_surge(stock_info, min_volume_ratio=2.5, lookback_days=63):
         
         # 检查价格数据是否有效
         if len(prices) == 0 or np.isnan(prices).any():
+            return False
+        
+        # 检查当前股价是否大于最小要求
+        current_price = prices[-1]
+        if current_price < min_price:
             return False
             
         min_price = np.min(prices)
@@ -145,41 +151,39 @@ def filter_by_volume_surge(stock_info, min_volume_ratio=2.5, lookback_days=63):
         if len(volumes) == 0 or np.isnan(volumes).any():
             return False
         
-        # 只关注最近的交易日(约3个月)
-        lookback_days = min(lookback_days, len(history))
+        # 只关注最近两周的交易日(约10个交易日)
+        lookback_days = min(10, len(history))
         
         # 检查当前是否处于历史底部区域(30%以内)
         if percentiles[-1] > 0.3:
             return False
         
-        # 计算最近15个交易日的平均成交量
-        recent_avg_volume = np.mean(volumes[-15:])
+        # 计算最近10个交易日的平均成交量
+        recent_avg_volume = np.mean(volumes[-lookback_days:])
         # 计算之前30个交易日的平均成交量
-        previous_avg_volume = np.mean(volumes[-45:-15])
+        previous_avg_volume = np.mean(volumes[-40:-lookback_days])
         
         # 检查近期平均成交量是否显著高于之前
         volume_increase_ratio = recent_avg_volume / previous_avg_volume if previous_avg_volume > 0 else 0
         
         # 检查是否有连续放量
-        consecutive_high_volume = 0
         high_volume_days = 0
-        for i in range(1, 15):  # 检查最近15天
+        for i in range(1, lookback_days+1):  # 检查最近10天
             if volumes[-i] > previous_avg_volume * min_volume_ratio:
-                consecutive_high_volume += 1
                 high_volume_days += 1
                 
         # 计算最近价格稳定性和趋势
-        recent_prices = prices[-15:]
+        recent_prices = prices[-lookback_days:]
         price_std = np.std(recent_prices) / np.mean(recent_prices)  # 价格波动率
-        price_trend = prices[-1] / prices[-15] - 1 if prices[-15] > 0 else 0
+        price_trend = prices[-1] / prices[-lookback_days] - 1 if prices[-lookback_days] > 0 else 0
         
         # 判断条件 (三选一):
         # 1. 最近平均成交量是之前的1.8倍以上
-        # 2. 15天内有2天以上成交量是之前均值的2.5倍以上
+        # 2. 10天内有2天以上成交量是之前均值的2.5倍以上
         # 3. 价格处于底部区域且有任何明显放量(单日2倍)，同时价格开始走稳
         condition1 = volume_increase_ratio >= 1.8
         condition2 = high_volume_days >= 2
-        condition3 = (percentiles[-1] <= 0.2 and max(volumes[-10:]) > previous_avg_volume * 2.0 and 
+        condition3 = (percentiles[-1] <= 0.2 and max(volumes[-lookback_days:]) > previous_avg_volume * 2.0 and 
                       price_std < 0.05 and price_trend >= -0.02)  # 非常低的位置有放量且价格稳定
         
         if condition1 or condition2 or condition3:
@@ -427,7 +431,7 @@ if __name__ == "__main__":
     print("开始筛选股票...")
     
     # 测试单个股票的数据获取 - 用于调试
-    test_mode = False
+    test_mode = True
     if test_mode:
         try:
             # 测试图中的股票
@@ -451,6 +455,7 @@ if __name__ == "__main__":
                     latest_price = history['Close'].iloc[-1]
                     latest_date = history.index[-1].strftime('%Y-%m-%d')
                     print(f"最近收盘价: ${latest_price:.2f} ({latest_date})")
+                    print(f"股价是否大于5美元: {latest_price > 5.0}")
                     
                     # 计算当前价格在历史区间的位置
                     price_percentile = (latest_price - min_price) / (max_price - min_price) * 100
@@ -458,19 +463,19 @@ if __name__ == "__main__":
                     
                     # 计算最近10个交易日的平均成交量
                     recent_avg_volume = np.mean(history['Volume'].iloc[-10:])
-                    # 计算之前20个交易日的平均成交量
-                    previous_avg_volume = np.mean(history['Volume'].iloc[-30:-10]) 
+                    # 计算之前30个交易日的平均成交量
+                    previous_avg_volume = np.mean(history['Volume'].iloc[-40:-10]) 
                     volume_increase_ratio = recent_avg_volume / previous_avg_volume
                     print(f"最近10天平均成交量是之前的 {volume_increase_ratio:.2f} 倍")
                     
                     # 检查连续高成交量
                     volumes = history['Volume'].values
-                    previous_avg = np.mean(volumes[-30:-10])
-                    consecutive_high = 0
-                    for i in range(1, 10):
-                        if volumes[-i] > previous_avg * 3.0:
-                            consecutive_high += 1
-                    print(f"最近10天中有 {consecutive_high} 天成交量是之前均值的3倍以上")
+                    previous_avg = np.mean(volumes[-40:-10])
+                    high_volume_days = 0
+                    for i in range(1, 11):  # 检查最近10天
+                        if volumes[-i] > previous_avg * 2.5:
+                            high_volume_days += 1
+                    print(f"最近10天中有 {high_volume_days} 天成交量是之前均值的2.5倍以上")
                     
                     # 查看价格趋势
                     price_trend = history['Close'].iloc[-1] / history['Close'].iloc[-10] - 1
