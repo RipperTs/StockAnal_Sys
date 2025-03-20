@@ -17,7 +17,7 @@ USE_DATABASE = os.getenv('USE_DATABASE', 'False').lower() == 'true'
 if DATABASE_URL.startswith('sqlite:///'):
     db_path = DATABASE_URL.replace('sqlite:///', '')
     db_dir = os.path.dirname(db_path)
-    
+
     if db_dir and not os.path.exists(db_dir):
         print(f"创建数据库目录: {db_dir}")
         os.makedirs(db_dir, exist_ok=True)
@@ -37,6 +37,7 @@ class StockInfo(Base):
     stock_name = Column(String(50))
     market_type = Column(String(5))
     industry = Column(String(50))
+    pe_ratio = Column(Float(10))
     updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
 
     def to_dict(self):
@@ -45,6 +46,7 @@ class StockInfo(Base):
             'stock_name': self.stock_name,
             'market_type': self.market_type,
             'industry': self.industry,
+            'pe_ratio': self.pe_ratio,
             'updated_at': self.updated_at.strftime('%Y-%m-%d %H:%M:%S') if self.updated_at else None
         }
 
