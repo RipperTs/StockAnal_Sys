@@ -431,7 +431,7 @@ if __name__ == "__main__":
     if test_mode:
         try:
             # 测试图中的股票
-            test_stocks = ["VSCO", "KSS", "AAPL"]
+            test_stocks = ["VSCO", "KSS", "AAPL", "XP", "ABLV"]
             for test_stock_code in test_stocks:
                 print(f"\n测试获取 {test_stock_code} 的历史数据...")
                 history = get_stock_history(test_stock_code)
