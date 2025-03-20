@@ -12,22 +12,28 @@ import requests
 import json
 
 
-def getStockList(page: int = 1, size: int = 60):
+def getStockList(page: int = 1, size: int = 90):
     """
-    从新浪财经获取所有美股股票信息
+    从雪球获取所有美股股票信息
     https://finance.sina.com.cn/stock/usstock/sector.shtml
     page: 页码
     size: 每页数量, 20,40,60
     """
-    url = f"https://stock.finance.sina.com.cn/usstock/api/jsonp.php/list['data']/US_CategoryService.getList?page={page}&num={size}&sort=&asc=0&market=&id="
+    url = f"https://stock.xueqiu.com/v5/stock/screener/quote/list.json?page={page}&size={size}&order=desc&order_by=percent&market=US&type=us"
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.114 Safari/537.",
+        "cookie": "xq_a_token=ded7d04ca80c7e01078faaba6910b799630b71d4;u=2525085352"
+    }
     try:
-        response = requests.get(url, timeout=30)
+        response = requests.get(url, headers=headers, timeout=30)
         response.raise_for_status()  # 确保请求成功
-        data_json = json.loads(response.text[response.text.find("({") + 1: response.text.rfind(");")])
-        return data_json.get('data', [])
+        data_json = response.json()
+        if data_json.get('error_code', 400) == 0:
+            return data_json.get('data', {}).get('list', [])
     except Exception as e:
         print(f"获取或解析数据时发生错误: {e}")
-        return []
+
+    return []
 
 
 if __name__ == '__main__':
@@ -43,11 +49,10 @@ if __name__ == '__main__':
         session.commit()
 
         page = 1
-        total_page = 256
         batch_size = 50
         batch_data = []
 
-        while page <= total_page:  # 修正循环条件
+        while True:  # 修正循环条件
             print(f"正在获取第 {page} 页的美股数据...")
             lists = getStockList(page)
             if not lists:
@@ -57,10 +62,10 @@ if __name__ == '__main__':
             for item in lists:
                 stock_info = StockInfo(
                     stock_code=item["symbol"],
-                    stock_name=item["cname"],
+                    stock_name=item["name"],
                     market_type="US",
-                    industry=item['category'],
-                    pe_ratio=item['pe'])
+                    industry="",
+                    pe_ratio=item['pe_ttm'])
 
                 batch_data.append(stock_info)
 
