@@ -3,6 +3,7 @@ import os
 import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
+import csv  # 导入csv模块
 
 # 添加项目根目录到路径
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -349,6 +350,8 @@ def filter_stocks(min_pe=5, max_pe=50, market_type="US", strategies=None, output
     
     # 如果提供了输出目录，则准备输出文件
     file_handlers = {}
+    csv_writers = {}
+    
     if output_dir:
         if not os.path.exists(output_dir):
             os.makedirs(output_dir)
@@ -356,19 +359,29 @@ def filter_stocks(min_pe=5, max_pe=50, market_type="US", strategies=None, output
         # 创建时间戳，用于文件名
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         
-        # 为每个策略创建一个文件
-        file_handlers["volume_surge"] = open(os.path.join(output_dir, f"strategy1_volume_surge_{timestamp}.txt"), "w", encoding="utf-8")
-        file_handlers["pullback_50"] = open(os.path.join(output_dir, f"strategy2_pullback_50_{timestamp}.txt"), "w", encoding="utf-8")
-        file_handlers["initial_pullback_20"] = open(os.path.join(output_dir, f"strategy3_initial_pullback_20_{timestamp}.txt"), "w", encoding="utf-8")
-        file_handlers["all_strategies"] = open(os.path.join(output_dir, f"all_strategies_{timestamp}.txt"), "w", encoding="utf-8")
+        # 为每个策略创建一个CSV文件
+        file_handlers["volume_surge"] = open(os.path.join(output_dir, f"strategy1_volume_surge_{timestamp}.csv"), "w", newline='', encoding="utf-8")
+        file_handlers["pullback_50"] = open(os.path.join(output_dir, f"strategy2_pullback_50_{timestamp}.csv"), "w", newline='', encoding="utf-8")
+        file_handlers["initial_pullback_20"] = open(os.path.join(output_dir, f"strategy3_initial_pullback_20_{timestamp}.csv"), "w", newline='', encoding="utf-8")
+        file_handlers["all_strategies"] = open(os.path.join(output_dir, f"all_strategies_{timestamp}.csv"), "w", newline='', encoding="utf-8")
         
-        # 写入文件头
+        # 创建CSV写入器
         for key, file in file_handlers.items():
-            file.write(f"筛选条件: PE介于{min_pe}和{max_pe}之间的{market_type}股票\n")
+            csv_writers[key] = csv.writer(file)
+            
+            # 写入表头行
             if key == "all_strategies":
-                file.write("股票代码, 股票名称, PE, 策略1(放量), 策略2(回调), 策略3(回测)\n")
+                # 先写入筛选条件说明
+                csv_writers[key].writerow([f"筛选条件: PE介于{min_pe}和{max_pe}之间的{market_type}股票"])
+                # 写入列标题
+                csv_writers[key].writerow(["股票代码", "股票名称", "PE", "策略1(放量)", "策略2(回调)", "策略3(回测)"])
             else:
-                file.write("股票代码, 股票名称, PE\n")
+                # 先写入筛选条件说明
+                csv_writers[key].writerow([f"筛选条件: PE介于{min_pe}和{max_pe}之间的{market_type}股票"])
+                # 写入列标题
+                csv_writers[key].writerow(["股票代码", "股票名称", "PE"])
+            
+            # 立即刷新
             file.flush()
     
     total_stocks = len(pe_filtered_stocks)
@@ -390,8 +403,8 @@ def filter_stocks(min_pe=5, max_pe=50, market_type="US", strategies=None, output
             strategy_results["volume_surge"] = True
             
             # 如果有文件输出，则立即写入
-            if output_dir and "volume_surge" in file_handlers:
-                file_handlers["volume_surge"].write(f"{stock.stock_code}, {stock.stock_name}, {stock.pe_ratio}\n")
+            if output_dir and "volume_surge" in csv_writers:
+                csv_writers["volume_surge"].writerow([stock.stock_code, stock.stock_name, stock.pe_ratio])
                 file_handlers["volume_surge"].flush()  # 确保立即写入磁盘
         
         if "pullback_50" in strategies and filter_by_pullback_50_percent(stock):
@@ -400,8 +413,8 @@ def filter_stocks(min_pe=5, max_pe=50, market_type="US", strategies=None, output
             strategy_results["pullback_50"] = True
             
             # 如果有文件输出，则立即写入
-            if output_dir and "pullback_50" in file_handlers:
-                file_handlers["pullback_50"].write(f"{stock.stock_code}, {stock.stock_name}, {stock.pe_ratio}\n")
+            if output_dir and "pullback_50" in csv_writers:
+                csv_writers["pullback_50"].writerow([stock.stock_code, stock.stock_name, stock.pe_ratio])
                 file_handlers["pullback_50"].flush()  # 确保立即写入磁盘
         
         if "initial_pullback_20" in strategies and filter_by_initial_pullback_20_percent(stock):
@@ -410,8 +423,8 @@ def filter_stocks(min_pe=5, max_pe=50, market_type="US", strategies=None, output
             strategy_results["initial_pullback_20"] = True
             
             # 如果有文件输出，则立即写入
-            if output_dir and "initial_pullback_20" in file_handlers:
-                file_handlers["initial_pullback_20"].write(f"{stock.stock_code}, {stock.stock_name}, {stock.pe_ratio}\n")
+            if output_dir and "initial_pullback_20" in csv_writers:
+                csv_writers["initial_pullback_20"].writerow([stock.stock_code, stock.stock_name, stock.pe_ratio])
                 file_handlers["initial_pullback_20"].flush()  # 确保立即写入磁盘
         
         # 如果符合所有指定的策略，添加到all_strategies列表
@@ -419,11 +432,15 @@ def filter_stocks(min_pe=5, max_pe=50, market_type="US", strategies=None, output
             result["all_strategies"].append(stock)
             
             # 如果有文件输出，则立即写入
-            if output_dir and "all_strategies" in file_handlers:
-                file_handlers["all_strategies"].write(
-                    f"{stock.stock_code}, {stock.stock_name}, {stock.pe_ratio}, "
-                    f"{strategy_results['volume_surge']}, {strategy_results['pullback_50']}, {strategy_results['initial_pullback_20']}\n"
-                )
+            if output_dir and "all_strategies" in csv_writers:
+                csv_writers["all_strategies"].writerow([
+                    stock.stock_code, 
+                    stock.stock_name, 
+                    stock.pe_ratio,
+                    strategy_results["volume_surge"],
+                    strategy_results["pullback_50"],
+                    strategy_results["initial_pullback_20"]
+                ])
                 file_handlers["all_strategies"].flush()  # 确保立即写入磁盘
     
     # 关闭所有文件
