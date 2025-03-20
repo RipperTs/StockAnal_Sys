@@ -15,33 +15,43 @@ class BoChaNews:
         """
         获取联网搜索结果数据
         """
-        cache_key = "bocha_news:" + md5_encrypt(f"{query}:{freshness}:{page}:{count}")
-        redis_utils = RedisUtils()
-        if is_cache and redis_utils.exists(cache_key):
-            return redis_utils.get_cache(cache_key)
+        try:
+            cache_key = "bocha_news:" + md5_encrypt(f"{query}:{freshness}:{page}:{count}")
+            redis_utils = RedisUtils()
+            if is_cache and redis_utils.exists(cache_key):
+                return redis_utils.get_cache(cache_key)
 
-        url = "https://api.bochaai.com/v1/web-search"
-        headers = {
-            'Authorization': f'Bearer {BOCHA_API_KEY}',
-            'Content-Type': 'application/json'
-        }
+            url = "https://api.bochaai.com/v1/web-search"
+            headers = {
+                'Authorization': f'Bearer {BOCHA_API_KEY}',
+                'Content-Type': 'application/json'
+            }
 
-        payload = {
-            "query": query,
-            "page": page,
-            "count": count,
-            "freshness": freshness,
-            "summary": True
-        }
+            payload = {
+                "query": query,
+                "page": page,
+                "count": count,
+                "freshness": freshness,
+                "summary": True
+            }
 
-        response = requests.post(url, headers=headers, data=json.dumps(payload), timeout=30)
-        if response.status_code != 200:
+            response = requests.post(url, headers=headers, data=json.dumps(payload), timeout=30)
+            if response.status_code != 200:
+                return None
+
+            response_json = response.json()
+            if response_json.get("code") != 200:
+                return None
+
+            response_data = response_json.get("data")
+
+            if is_cache:
+                redis_utils.set_cache(cache_key, response_data, expire_seconds=60 * 60 * 8)
+
+            return response_data
+        except Exception as e:
+            print(f"获取联网搜索结果数据出错: {str(e)}")
             return None
-
-        if is_cache:
-            redis_utils.set_cache(cache_key, response.json(), expire_seconds=60 * 60 * 8)
-
-        return response.json()
 
 
 if __name__ == '__main__':

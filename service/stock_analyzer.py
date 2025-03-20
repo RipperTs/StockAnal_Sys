@@ -2,14 +2,15 @@ import time
 import traceback
 import pandas as pd
 from datetime import datetime, timedelta
-import os
-from dotenv import load_dotenv
 import logging
 import math
 import threading
+import requests
 
 from config import OPENAI_API_KEY, OPENAI_API_URL, OPENAI_API_MODEL, NEWS_MODEL
 from db.stock_info_dao import StockInfoDAO
+from service.bocha_news import BoChaNews
+from utils.redis_utils import RedisUtils
 
 # Thread-local storage
 thread_local = threading.local()
@@ -25,9 +26,6 @@ class StockAnalyzer:
         logging.basicConfig(level=logging.INFO,
                             format='%(asctime)s - %(levelname)s - %(message)s')
         self.logger = logging.getLogger(__name__)
-
-        # 加载环境变量
-        load_dotenv()
 
         # 设置 OpenAI API (原来是Gemini API)
         self.openai_api_key = OPENAI_API_KEY
@@ -91,7 +89,7 @@ class StockAnalyzer:
                 # 使用专门的US股票服务获取美股数据
                 from service.us_stock_service import USStockService
                 us_service = USStockService()
-                
+
                 try:
                     # 尝试使用USStockService获取数据
                     df = us_service.get_us_stock_data(
@@ -301,20 +299,20 @@ class StockAnalyzer:
             if len(df) < 30:  # 确保有足够的数据进行分析
                 self.logger.warning(f"数据量不足，无法进行可靠评分: {len(df)}行")
                 return 50  # 返回中性评分
-                
+
             latest = df.iloc[-1]
             prev_days = min(30, len(df) - 1)
-            
+
             # 基础权重配置 - 更加平衡的权重分配
             weights = {
-                'trend': 0.20,       # 趋势分析
-                'momentum': 0.20,    # 动量分析
-                'technical': 0.25,   # 技术指标
+                'trend': 0.20,  # 趋势分析
+                'momentum': 0.20,  # 动量分析
+                'technical': 0.25,  # 技术指标
                 'volatility': 0.15,  # 波动性分析
-                'volume': 0.10,      # 成交量分析
-                'market': 0.10       # 市场环境
+                'volume': 0.10,  # 成交量分析
+                'market': 0.10  # 市场环境
             }
-            
+
             # 根据市场类型调整权重
             if market_type == 'US':
                 # 美股更重视长期趋势和基本面
@@ -325,23 +323,23 @@ class StockAnalyzer:
                 # 港股更受A股和国际市场影响
                 weights['market'] = 0.15
                 weights['momentum'] = 0.15
-            
+
             # 1. 趋势分析 (0-100分)
             trend_score = 0
-            
+
             # 均线系统评估 - 多周期分析
             # 短期趋势 (5日均线)
             if latest['MA5'] > latest['MA20']:
                 trend_score += 20
-            
+
             # 中期趋势 (20日均线)
             if latest['MA20'] > latest['MA60']:
                 trend_score += 20
-            
+
             # 多头排列 (黄金排列)
             if latest['MA5'] > latest['MA20'] and latest['MA20'] > latest['MA60']:
                 trend_score += 20
-            
+
             # 价格位置评估
             if latest['close'] > latest['MA5']:
                 trend_score += 10
@@ -349,27 +347,27 @@ class StockAnalyzer:
                 trend_score += 10
             if latest['close'] > latest['MA60']:
                 trend_score += 10
-            
+
             # 趋势持续性评估 - 检查最近5天的均线方向
             ma5_direction = 0
             ma20_direction = 0
-            
+
             for i in range(1, min(6, len(df))):
-                if df.iloc[-i]['MA5'] > df.iloc[-i-1]['MA5']:
+                if df.iloc[-i]['MA5'] > df.iloc[-i - 1]['MA5']:
                     ma5_direction += 1
-                if df.iloc[-i]['MA20'] > df.iloc[-i-1]['MA20']:
+                if df.iloc[-i]['MA20'] > df.iloc[-i - 1]['MA20']:
                     ma20_direction += 1
-            
+
             # 均线向上的天数越多，评分越高
             trend_score += (ma5_direction / 5) * 5
             trend_score += (ma20_direction / 5) * 5
-            
+
             # 确保最大分数限制
             trend_score = min(100, trend_score)
-            
+
             # 2. 动量分析 (0-100分)
             momentum_score = 0
-            
+
             # ROC动量指标评估
             roc = latest['ROC']
             if roc > 8:  # 强劲上涨动量
@@ -382,7 +380,7 @@ class StockAnalyzer:
                 momentum_score += 10
             elif -8 <= roc < -4:  # 中等下跌动量
                 momentum_score += 5
-            
+
             # 多周期动量比较 - 加速度分析
             try:
                 if len(df) >= 21:
@@ -390,7 +388,7 @@ class StockAnalyzer:
                     price_change_5d = (latest['close'] / df.iloc[-6]['close'] - 1) * 100
                     price_change_10d = (latest['close'] / df.iloc[-11]['close'] - 1) * 100
                     price_change_20d = (latest['close'] / df.iloc[-21]['close'] - 1) * 100
-                    
+
                     # 动量加速 - 短期动量强于长期动量
                     if price_change_5d > price_change_10d > price_change_20d and price_change_5d > 0:
                         # 完美的动量加速
@@ -406,13 +404,13 @@ class StockAnalyzer:
                         momentum_score += 10
             except Exception as e:
                 self.logger.warning(f"计算多周期动量时出错: {str(e)}")
-            
+
             # 价格突破评估
             try:
                 # 计算20日高点和低点
                 high_20d = max([df.iloc[-i]['high'] for i in range(1, min(21, len(df)))])
                 low_20d = min([df.iloc[-i]['low'] for i in range(1, min(21, len(df)))])
-                
+
                 # 突破20日高点
                 if latest['close'] > high_20d * 0.99 and latest['close'] < high_20d * 1.03:
                     momentum_score += 30
@@ -421,13 +419,13 @@ class StockAnalyzer:
                     momentum_score -= 20
             except Exception as e:
                 self.logger.warning(f"计算价格突破时出错: {str(e)}")
-            
+
             # 确保分数在0-100范围内
             momentum_score = max(0, min(100, momentum_score))
-            
+
             # 3. 技术指标分析 (0-100分)
             technical_score = 0
-            
+
             # RSI指标评估 - 超买超卖与背离
             rsi = latest['RSI']
             if 40 <= rsi <= 60:  # 中性区域，稳定趋势
@@ -444,26 +442,26 @@ class StockAnalyzer:
                 technical_score += 5
             elif rsi > 80:  # 极度超买，强烈卖出信号
                 technical_score += 0
-            
+
             # RSI背离检测
             try:
                 if len(df) >= 10:
                     # 检查价格新高而RSI未创新高 (顶背离)
                     price_new_high = latest['close'] > max([df.iloc[-i]['close'] for i in range(2, 10)])
                     rsi_not_new_high = latest['RSI'] < max([df.iloc[-i]['RSI'] for i in range(2, 10)])
-                    
+
                     if price_new_high and rsi_not_new_high and rsi > 70:
                         technical_score -= 20  # 顶背离，看跌信号
-                    
+
                     # 检查价格新低而RSI未创新低 (底背离)
                     price_new_low = latest['close'] < min([df.iloc[-i]['close'] for i in range(2, 10)])
                     rsi_not_new_low = latest['RSI'] > min([df.iloc[-i]['RSI'] for i in range(2, 10)])
-                    
+
                     if price_new_low and rsi_not_new_low and rsi < 30:
                         technical_score += 20  # 底背离，看涨信号
             except Exception as e:
                 self.logger.warning(f"检测RSI背离时出错: {str(e)}")
-            
+
             # MACD指标评估
             if latest['MACD'] > latest['Signal'] and latest['MACD_hist'] > 0:
                 # MACD金叉且柱状图为正
@@ -483,10 +481,10 @@ class StockAnalyzer:
             else:
                 # 其他MACD情况
                 technical_score += 5
-            
+
             # 布林带位置评估
             bb_position = (latest['close'] - latest['BB_lower']) / (latest['BB_upper'] - latest['BB_lower'])
-            
+
             if bb_position < 0.2:  # 接近下轨，潜在超卖
                 technical_score += 25
             elif 0.2 <= bb_position < 0.4:  # 下轨和中轨之间，潜在买入区域
@@ -497,25 +495,25 @@ class StockAnalyzer:
                 technical_score += 5
             elif bb_position > 0.8:  # 接近上轨，潜在超买
                 technical_score += 0
-            
+
             # 布林带宽度评估 - 挤压和扩张
             try:
                 bb_width = (latest['BB_upper'] - latest['BB_lower']) / latest['BB_middle']
                 bb_width_prev = (df.iloc[-10]['BB_upper'] - df.iloc[-10]['BB_lower']) / df.iloc[-10]['BB_middle']
-                
+
                 if bb_width < bb_width_prev * 0.8:  # 布林带收窄，波动性降低，可能即将爆发
                     technical_score += 10
                 elif bb_width > bb_width_prev * 1.5:  # 布林带扩张，波动性增加
                     technical_score += 5
             except Exception as e:
                 self.logger.warning(f"计算布林带宽度时出错: {str(e)}")
-            
+
             # 确保分数在0-100范围内
             technical_score = max(0, min(100, technical_score))
-            
+
             # 4. 波动性分析 (0-100分)
             volatility_score = 0
-            
+
             # 波动率评估 - 适中的波动率最佳
             volatility = latest['Volatility']
             if 0.8 <= volatility <= 2.5:  # 理想波动率范围
@@ -528,12 +526,12 @@ class StockAnalyzer:
                 volatility_score += 20
             else:  # 波动率过高，风险较大
                 volatility_score += 10
-            
+
             # ATR趋势评估
             try:
                 atr_5d_avg = sum([df.iloc[-i]['ATR'] for i in range(1, 6)]) / 5
                 atr_20d_avg = sum([df.iloc[-i]['ATR'] for i in range(1, 21)]) / 20
-                
+
                 # ATR上升，波动性增加
                 if latest['ATR'] > atr_5d_avg > atr_20d_avg:
                     volatility_score += 20
@@ -542,13 +540,14 @@ class StockAnalyzer:
                     volatility_score += 30
             except Exception as e:
                 self.logger.warning(f"计算ATR趋势时出错: {str(e)}")
-            
+
             # 价格波动范围评估
             try:
                 # 计算最近10天的日内波动率
-                intraday_volatility = [(df.iloc[-i]['high'] - df.iloc[-i]['low']) / df.iloc[-i]['low'] * 100 for i in range(1, 11)]
+                intraday_volatility = [(df.iloc[-i]['high'] - df.iloc[-i]['low']) / df.iloc[-i]['low'] * 100 for i in
+                                       range(1, 11)]
                 avg_intraday_volatility = sum(intraday_volatility) / len(intraday_volatility)
-                
+
                 if 1.0 <= avg_intraday_volatility <= 3.0:  # 适中的日内波动
                     volatility_score += 20
                 elif avg_intraday_volatility < 1.0:  # 日内波动过小
@@ -557,17 +556,17 @@ class StockAnalyzer:
                     volatility_score += 0
             except Exception as e:
                 self.logger.warning(f"计算日内波动率时出错: {str(e)}")
-            
+
             # 确保分数在0-100范围内
             volatility_score = max(0, min(100, volatility_score))
-            
+
             # 5. 成交量分析 (0-100分)
             volume_score = 0
-            
+
             # 成交量趋势分析
             recent_vol_ratio = [df.iloc[-i]['Volume_Ratio'] for i in range(1, min(6, len(df)))]
             avg_vol_ratio = sum(recent_vol_ratio) / len(recent_vol_ratio)
-            
+
             # 成交量与价格配合评估
             if avg_vol_ratio > 1.5 and latest['close'] > df.iloc[-2]['close']:
                 # 放量上涨，强烈看涨信号
@@ -587,26 +586,26 @@ class StockAnalyzer:
             else:
                 # 其他情况
                 volume_score += 20
-            
+
             # 成交量变化趋势
             try:
                 vol_trend = 0
                 # 使用volume列而不是Volume列，确保与calculate_indicators方法中的列名一致
                 for i in range(1, min(6, len(df))):
-                    if df.iloc[-i]['volume'] > df.iloc[-i-1]['volume']:
+                    if df.iloc[-i]['volume'] > df.iloc[-i - 1]['volume']:
                         vol_trend += 1
-                
+
                 # 成交量连续增加
                 volume_score += (vol_trend / 5) * 20
             except Exception as e:
                 self.logger.warning(f"计算成交量趋势时出错: {str(e)}")
                 # 出错时不调整分数
-            
+
             # 成交量突变检测
             try:
                 # 使用volume列而不是Volume列，确保与calculate_indicators方法中的列名一致
                 vol_avg_10d = sum([df.iloc[-i]['volume'] for i in range(2, 12)]) / 10
-                
+
                 if latest['volume'] > vol_avg_10d * 2:  # 成交量是10日均量的2倍以上
                     if latest['close'] > df.iloc[-2]['close']:  # 且价格上涨
                         volume_score += 30
@@ -615,13 +614,13 @@ class StockAnalyzer:
             except Exception as e:
                 self.logger.warning(f"检测成交量突变时出错: {str(e)}")
                 # 出错时不调整分数
-            
+
             # 确保分数在0-100范围内
             volume_score = max(0, min(100, volume_score))
-            
+
             # 6. 市场环境分析 (0-100分)
             market_score = 50  # 默认中性评分
-            
+
             # 获取对应市场指数
             index_code = None
             if market_type == 'A':
@@ -630,31 +629,32 @@ class StockAnalyzer:
                 index_code = 'HSI'  # 恒生指数
             elif market_type == 'US':
                 index_code = 'SPX'  # 标普500
-            
+
             # 尝试获取指数数据并评估市场环境
             if index_code:
                 try:
                     index_df = self._get_index_data(index_code, market_type)
-                    
+
                     if index_df is not None and len(index_df) > 20:
                         # 计算指数趋势
                         try:
                             index_latest = index_df.iloc[-1]
-                            
+
                             # 确保close列存在
                             if 'close' not in index_df.columns:
                                 self.logger.warning(f"指数数据缺少close列，尝试寻找替代列")
                                 # 尝试找到一个可能的替代列
-                                possible_cols = [col for col in index_df.columns if col.lower() in ['close', 'closing', 'price', 'last', 'value']]
+                                possible_cols = [col for col in index_df.columns if
+                                                 col.lower() in ['close', 'closing', 'price', 'last', 'value']]
                                 if possible_cols:
                                     index_df['close'] = index_df[possible_cols[0]]
                                 else:
                                     raise ValueError("找不到可用作close的列")
-                                    
+
                             # 计算移动平均线
                             index_ma5 = index_df['close'].rolling(window=5).mean().iloc[-1]
                             index_ma20 = index_df['close'].rolling(window=20).mean().iloc[-1]
-                            
+
                             # 指数趋势评分
                             if index_latest['close'] > index_ma5 > index_ma20:
                                 # 指数多头排列
@@ -668,16 +668,16 @@ class StockAnalyzer:
                             elif index_latest['close'] < index_ma5:
                                 # 指数短期向下
                                 market_score -= 10
-                                
+
                             # 确保评分在0-100范围内
                             market_score = max(0, min(100, market_score))
-                            
+
                         except Exception as trend_e:
                             self.logger.warning(f"计算指数趋势时出错: {str(trend_e)}")
                             # 保留默认的中性评分
                     else:
                         self.logger.warning(f"获取到的指数数据不足，使用默认市场评分")
-                        
+
                         # 针对美股市场，如果无法获取SPX数据，降低市场评分在总分中的权重
                         if market_type == 'US':
                             self.logger.info("美股市场无指数数据，调整市场权重")
@@ -685,11 +685,11 @@ class StockAnalyzer:
                             # 将权重分配到其他因素
                             weights['trend'] += 0.03
                             weights['technical'] += 0.02
-                            
+
                 except Exception as idx_e:
                     self.logger.warning(f"处理指数数据时出错: {str(idx_e)}")
                     # 出错时保留默认的中性评分
-                    
+
                     # 针对美股市场，如果无法获取SPX数据，降低市场评分在总分中的权重
                     if market_type == 'US':
                         self.logger.info("美股市场无法获取指数数据，调整权重")
@@ -705,7 +705,7 @@ class StockAnalyzer:
                 if is_earnings_season:
                     # 财报季波动性更高，调整确定性
                     market_score = market_score * 0.9  # 降低确定性
-            
+
             elif market_type == 'HK':
                 # 港股特殊调整 - A股联动效应
                 a_share_linkage = self._check_a_share_linkage(df)
@@ -713,23 +713,23 @@ class StockAnalyzer:
                     # 根据内地市场情绪调整
                     mainland_sentiment = self._get_mainland_market_sentiment()
                     market_score += mainland_sentiment * 10
-            
+
             # 确保分数在0-100范围内
             market_score = max(0, min(100, market_score))
 
             # 计算加权总分
             final_score = (
-                trend_score * weights['trend'] +
-                momentum_score * weights['momentum'] +
-                technical_score * weights['technical'] +
-                volatility_score * weights['volatility'] +
-                volume_score * weights['volume'] +
-                market_score * weights['market']
+                    trend_score * weights['trend'] +
+                    momentum_score * weights['momentum'] +
+                    technical_score * weights['technical'] +
+                    volatility_score * weights['volatility'] +
+                    volume_score * weights['volume'] +
+                    market_score * weights['market']
             )
-            
+
             # 确保最终分数在0-100范围内
             final_score = max(0, min(100, round(final_score)))
-            
+
             # 存储各维度评分详情
             self.score_details = {
                 'trend': trend_score,
@@ -740,9 +740,9 @@ class StockAnalyzer:
                 'market': market_score,
                 'total': final_score
             }
-            
+
             return final_score
-            
+
         except Exception as e:
             self.logger.error(f"计算评分时出错: {str(e)}")
             self.logger.error(f"错误详情: {traceback.format_exc()}")
@@ -762,12 +762,12 @@ class StockAnalyzer:
         """
         try:
             import akshare as ak
-            
+
             # 缓存键
             cache_key = f"{index_code}_index_data"
             if cache_key in self.data_cache:
                 return self.data_cache[cache_key]
-            
+
             # 根据市场类型获取不同的指数数据
             if market_type == 'A':
                 # 使用akshare获取A股指数数据
@@ -775,80 +775,80 @@ class StockAnalyzer:
                 # 确保列名标准化
                 if 'close' not in df.columns and '收盘' in df.columns:
                     df = df.rename(columns={'收盘': 'close'})
-                
+
             elif market_type == 'HK':
                 # 获取港股指数数据
                 df = ak.stock_hk_index_daily_em(symbol=index_code)
                 # 确保列名标准化
                 if 'close' not in df.columns and '收盘价' in df.columns:
                     df = df.rename(columns={'收盘价': 'close'})
-                
+
             elif market_type == 'US':
                 # 获取美股指数数据
                 try:
                     # 首先尝试使用sina的API (推荐方法，更稳定)
                     self.logger.info(f"尝试使用新浪API获取美股指数 {index_code} 数据")
-                    
+
                     # 映射标准指数代码到新浪代码
                     sina_index_map = {
                         'SPX': '.INX',  # 标普500
                         'DJI': '.DJI',  # 道琼斯工业
-                        'IXIC': '.IXIC' # 纳斯达克
+                        'IXIC': '.IXIC'  # 纳斯达克
                     }
                     sina_symbol = sina_index_map.get(index_code, index_code)
-                    
+
                     # 如果代码不是以"."开头，而且不在映射表中，可能需要添加"."前缀
                     if not sina_symbol.startswith('.') and sina_symbol not in sina_index_map.values():
                         sina_symbol = f".{sina_symbol}"
-                    
+
                     self.logger.info(f"转换后的新浪指数代码: {sina_symbol}")
                     df = ak.index_us_stock_sina(symbol=sina_symbol)
-                    
+
                     # 检查结果是否有效
                     if df is None or df.empty:
                         raise ValueError("返回的数据为空")
-                    
+
                     # 确保列名标准化
                     if 'close' not in df.columns and '收盘价' in df.columns:
                         df = df.rename(columns={'收盘价': 'close'})
-                        
+
                     self.logger.info(f"成功获取美股指数 {index_code} 数据: {len(df)}行")
                 except Exception as us_e:
                     self.logger.warning(f"使用新浪API获取美股指数 {index_code} 数据失败: {str(us_e)}")
-                    
+
                     try:
                         # 尝试使用stock_us_daily直接获取，这里使用原始代码，但使用正确的映射
                         self.logger.info(f"尝试使用stock_us_daily获取美股指数 {index_code} 数据")
-                        
+
                         # 对于标普500指数，必须使用.INX代码
                         em_index_map = {
                             'SPX': '.INX',  # 标普500
                             'DJI': '.DJI',  # 道琼斯工业
                             'IXIC': '.IXIC'  # 纳斯达克
                         }
-                        
+
                         em_code = em_index_map.get(index_code, index_code)
                         self.logger.info(f"使用stock_us_daily获取美股指数: {em_code}")
                         df = ak.stock_us_daily(symbol=em_code)
-                        
+
                         # 检查结果是否有效
                         if df is None or df.empty:
                             raise ValueError("返回的数据为空")
-                            
+
                         # 确保列名标准化
                         if 'close' not in df.columns:
                             for col_name in ['收盘', '收盘价', 'Close', 'close']:
                                 if col_name in df.columns:
                                     df = df.rename(columns={col_name: 'close'})
                                     break
-                                    
+
                         self.logger.info(f"成功使用stock_us_daily获取美股指数 {index_code} 数据: {len(df)}行")
                     except Exception as em_e:
                         self.logger.error(f"使用stock_us_daily获取美股指数 {index_code} 数据失败: {str(em_e)}")
-                        
+
                         # 尝试使用其他备用方法 - 这里仅保留兼容性，但实际场景下可能不需要
                         self.logger.warning(f"无法获取美股指数 {index_code} 数据，调整市场评分权重")
-                        
+
                         # 由于无法获取指数数据，我们调整打分时市场因素的权重
                         return None
             else:
@@ -859,22 +859,22 @@ class StockAnalyzer:
                 # 确保有'date'列和'close'列
                 if 'date' not in df.columns and df.index.name == 'date':
                     df = df.reset_index()
-                
+
                 # 确保日期格式标准化
                 if 'date' in df.columns and not pd.api.types.is_datetime64_any_dtype(df['date']):
                     df['date'] = pd.to_datetime(df['date'])
-                    
+
                 # 对所有数值列进行类型转换
                 for col in df.columns:
                     if col != 'date' and df[col].dtype != 'object':
                         df[col] = pd.to_numeric(df[col], errors='coerce')
-                
+
                 self.data_cache[cache_key] = df
                 return df
             else:
                 self.logger.warning(f"获取 {market_type} 市场指数 {index_code} 的数据为空")
                 return None
-                
+
         except Exception as e:
             self.logger.warning(f"获取指数 {index_code} 数据失败: {str(e)}")
             return None
@@ -966,7 +966,7 @@ class StockAnalyzer:
                 market_adjustment = "(针对港股市场)"
             elif market_type == 'US':
                 market_adjustment = "(针对美股市场)"
-                
+
                 # 美股市场交易习惯与A股不同，调整建议
                 if action in ['cautious_buy', 'buy', 'strong_buy']:
                     market_adjustment = "(美股市场买入机会)"
@@ -985,7 +985,7 @@ class StockAnalyzer:
             if technical_data:
                 # 获取价格趋势
                 price_trend = technical_data.get('price_trend', 0)
-                
+
                 # 强价格趋势可能会调整建议
                 if price_trend > 3 and action in ['hold', 'cautious_hold']:  # 价格强势上涨
                     action = 'cautious_buy'  # 升级为谨慎买入
@@ -1102,7 +1102,7 @@ class StockAnalyzer:
         except:
             return 0  # 默认中性情绪
 
-    def get_stock_news(self, stock_code, market_type='A', limit=5):
+    def get_stock_news(self, stock_code, market_type='A', limit=10):
         """
         获取股票相关新闻和实时信息，通过OpenAI API调用news模型获取
         参数:
@@ -1114,31 +1114,38 @@ class StockAnalyzer:
         """
         try:
             self.logger.info(f"获取股票 {stock_code} 的相关新闻和信息")
+            cache_key = f"news_{stock_code}_{market_type}_{limit}"
+            redis_utils = RedisUtils()
+            if redis_utils.exists(cache_key):
+                return redis_utils.get_cache(cache_key)
 
-            # 缓存键
-            cache_key = f"{stock_code}_{market_type}_news"
-            if cache_key in self.data_cache and (
-                    datetime.now() - self.data_cache[cache_key]['timestamp']).seconds < 3600:
-                # 缓存1小时内的数据
-                return self.data_cache[cache_key]['data']
+            bocha_service = BoChaNews()
 
-            # 获取股票基本信息
-            stock_info = self.get_stock_info(stock_code)
-            stock_name = stock_info.get('股票名称', '未知')
-            industry = stock_info.get('行业', '未知')
-
-            # 构建新闻查询的prompt
             market_name = "A股" if market_type == 'A' else "港股" if market_type == 'HK' else "美股"
-            query = f"""请提供以下股票的最新相关新闻和信息:
-            股票名称: {stock_name}
-            股票代码: {stock_code}
-            市场: {market_name}
-            行业: {industry}
+            news_response = bocha_service.get_news(
+                f"请提供{market_name}股票代码: {stock_code} 的最新相关新闻和行业信息", count=limit)
+            if news_response is None:
+                self.logger.warning("未能获取到新闻数据")
+                return {
+                    'news': [],
+                    'announcements': [],
+                    'industry_news': [],
+                    'market_sentiment': 'neutral',
+                    'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                }
 
+            # 解析新闻数据
+            news_prompt = f"请作为一个专业的股票分析师, 然后从以下json格式的数据中提取信息:\n\n```json\n{news_response['webPages']['value']}\n```\n\n"
+            news_prompt += """要求:   
+            1. 根据提供的所有摘要内容分析市场情绪, 可选值: bullish/slightly_bullish/neutral/slightly_bearish/bearish
+            2. summary字段直接取摘要所有内容即可, 不需要再次进行总结
+            3. 你的内容必须依照提供的数据进行分析, 不得胡说八道
+            4. 最终结果返回json格式数据
+            
             请返回以下格式的JSON数据:
             {{
                 "news": [
-                    {{"title": "新闻标题", "date": "YYYY-MM-DD", "source": "新闻来源", "summary": "新闻摘要"}},
+                    {{"title": "新闻标题", "date": "YYYY-MM-DD", "source": "新闻来源", "summary": "摘要字段所有内容"}},
                     ...
                 ],
                 "announcements": [
@@ -1151,32 +1158,33 @@ class StockAnalyzer:
                 ],
                 "market_sentiment": "市场情绪(bullish/slightly_bullish/neutral/slightly_bearish/bearish)"
             }}
-
-            每个类别最多返回{limit}条。如果无法获取实际新闻，请基于行业知识生成合理的示例数据。
             """
 
-            messages = [{"role": "user", "content": query}]
+            messages = [{"role": "user", "content": news_prompt}]
 
             # 使用线程和队列添加超时控制
             import queue
             import threading
             import json
-            import openai
 
             result_queue = queue.Queue()
 
             def call_api():
                 try:
-                    # 使用OpenAI API调用news模型
-                    response = openai.ChatCompletion.create(
-                        model=self.news_model,  # 使用news模型
-                        messages=messages,
-                        temperature=0.7,
-                        max_tokens=4000,
-                        stream=False,
-                        timeout=240
-                    )
-                    result_queue.put(response)
+                    url = f"{self.openai_api_url}/chat/completions"
+                    payload = {
+                        "model": self.news_model,
+                        "messages": messages,
+                        "stream": False,
+                        "temperature": 0.6,
+                        "response_format": {"type": "json_object"}
+                    }
+                    headers = {
+                        'Content-Type': 'application/json',
+                        'Authorization': f'Bearer {self.openai_api_key}'
+                    }
+                    response = requests.post(url, headers=headers, json=payload, timeout=240)
+                    result_queue.put(response.json())
                 except Exception as e:
                     result_queue.put(e)
 
@@ -1214,12 +1222,7 @@ class StockAnalyzer:
                 # 添加时间戳
                 news_data['timestamp'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 
-                # 缓存结果
-                self.data_cache[cache_key] = {
-                    'data': news_data,
-                    'timestamp': datetime.now()
-                }
-
+                redis_utils.set_cache(cache_key, news_data, expire_seconds=60 * 60 * 8)
                 return news_data
 
             except queue.Empty:
@@ -1374,6 +1377,8 @@ class StockAnalyzer:
             def call_api():
                 try:
                     response = openai.ChatCompletion.create(
+                        api_base=self.openai_api_url,
+                        api_key=self.openai_api_key,
                         model=self.openai_model,
                         messages=messages,
                         temperature=0.8,
@@ -1464,16 +1469,16 @@ class StockAnalyzer:
         try:
             # 获取股票数据
             df = self.get_stock_data(stock_code, market_type)
-            
+
             # 计算技术指标
             df = self.calculate_indicators(df)
-            
+
             # 计算评分
             score = self.calculate_score(df, market_type)
-            
+
             # 获取最新数据
             latest = df.iloc[-1]
-            
+
             # 计算价格趋势 - 添加错误处理
             recent_price_change = 0
             try:
@@ -1481,7 +1486,7 @@ class StockAnalyzer:
                     recent_price_change = (latest['close'] / df.iloc[-6]['close'] - 1) * 100
             except Exception as e:
                 self.logger.warning(f"计算价格趋势时出错: {str(e)}")
-            
+
             # 准备技术数据
             technical_data = {
                 'RSI': latest['RSI'],
@@ -1490,7 +1495,7 @@ class StockAnalyzer:
                 'BB_position': (latest['close'] - latest['BB_lower']) / (latest['BB_upper'] - latest['BB_lower']),
                 'price_trend': recent_price_change  # 价格趋势数据
             }
-            
+
             # 获取新闻数据
             news_data = None
             try:
@@ -1500,18 +1505,18 @@ class StockAnalyzer:
                     sentiment_score = sum([n.get('sentiment', 0) for n in news]) / len(news)
                     news_data = {
                         'news': news,
-                        'market_sentiment': 'bullish' if sentiment_score > 0.3 else 
-                                           'bearish' if sentiment_score < -0.3 else 'neutral'
+                        'market_sentiment': 'bullish' if sentiment_score > 0.3 else
+                        'bearish' if sentiment_score < -0.3 else 'neutral'
                     }
             except Exception as e:
                 self.logger.warning(f"获取新闻数据时出错: {str(e)}")
-            
+
             # 获取投资建议
             recommendation = self.get_recommendation(score, market_type, technical_data, news_data)
-            
+
             # 识别支撑位和阻力位
             support_resistance = self.identify_support_resistance(df)
-            
+
             # 获取AI分析
             ai_analysis = None
             try:
@@ -1519,7 +1524,7 @@ class StockAnalyzer:
             except Exception as e:
                 self.logger.error(f"获取AI分析时出错: {str(e)}")
                 ai_analysis = "无法获取AI分析"
-            
+
             # 构建分析报告
             report = {
                 'stock_code': stock_code,
@@ -1545,12 +1550,12 @@ class StockAnalyzer:
                 'support_resistance': support_resistance,
                 'ai_analysis': ai_analysis
             }
-            
+
             # 验证并修复报告中的无效值
             report = self._validate_and_fix_report(report)
-            
+
             return report
-            
+
         except Exception as e:
             self.logger.error(f"分析股票 {stock_code} 时出错: {str(e)}")
             raise
@@ -1560,21 +1565,21 @@ class StockAnalyzer:
         try:
             results = []
             recommendations = []
-            
+
             # 调整最低评分阈值，使其与新的评分系统匹配
             adjusted_min_score = min_score
             if min_score > 80:  # 如果用户设置了很高的阈值，适当调整
                 adjusted_min_score = 75
-            
+
             for stock_code in stock_list:
                 try:
                     # 快速分析股票
                     report = self.quick_analyze_stock(stock_code, market_type)
-                    
+
                     # 检查评分是否达到最低要求
                     if report['score'] >= adjusted_min_score:
                         results.append(report)
-                        
+
                         # 添加到推荐列表
                         recommendations.append({
                             'stock_code': stock_code,
@@ -1586,10 +1591,10 @@ class StockAnalyzer:
                 except Exception as e:
                     self.logger.error(f"扫描股票 {stock_code} 时出错: {str(e)}")
                     continue
-            
+
             # 按评分排序
             recommendations = sorted(recommendations, key=lambda x: x['score'], reverse=True)
-            
+
             return recommendations
         except Exception as e:
             self.logger.error(f"市场扫描时出错: {str(e)}")
@@ -1610,7 +1615,7 @@ class StockAnalyzer:
             # 获取最新数据
             latest = df.iloc[-1]
             prev = df.iloc[-2] if len(df) > 1 else latest
-            
+
             # 计算价格趋势 - 添加错误处理
             recent_price_change = 0
             try:
@@ -1630,14 +1635,14 @@ class StockAnalyzer:
             # 尝试获取股票名称和行业
             stock_name = '未知'
             industry = '未知'
-            
+
             try:
                 # 美股特殊处理
                 if market_type == 'US':
                     # 提前设置默认值以防获取失败
                     stock_name = f"{stock_code} (US)"
                     industry = "美股"
-                    
+
                     # 尝试获取详细信息
                     stock_info = self.get_stock_info(stock_code)
                     if stock_info and '股票名称' in stock_info and stock_info['股票名称'] != '未知':
@@ -1694,12 +1699,14 @@ class StockAnalyzer:
         try:
             # 检查是否是美股代码 (通常包含字母或者以105.开头)
             is_us_stock = False
-            if stock_code.startswith('105.') or stock_code.startswith('106.') or (any(c.isalpha() for c in stock_code) and not stock_code.startswith('0') and not stock_code.startswith('3') and not stock_code.startswith('6')):
+            if stock_code.startswith('105.') or stock_code.startswith('106.') or (
+                    any(c.isalpha() for c in stock_code) and not stock_code.startswith(
+                '0') and not stock_code.startswith('3') and not stock_code.startswith('6')):
                 is_us_stock = True
                 self.logger.info(f"检测到美股代码: {stock_code}")
-            
+
             info_dict = {}
-            
+
             if is_us_stock:
                 # 美股特殊处理
                 try:
@@ -1777,7 +1784,8 @@ class StockAnalyzer:
                 info_dict['地区'] = "未知"
 
             # 增加更多日志来调试问题
-            self.logger.info(f"获取到股票信息: 名称={info_dict.get('股票名称', '未知')}, 行业={info_dict.get('行业', '未知')}")
+            self.logger.info(
+                f"获取到股票信息: 名称={info_dict.get('股票名称', '未知')}, 行业={info_dict.get('行业', '未知')}")
 
             self.data_cache[cache_key] = info_dict
             return info_dict
@@ -1949,7 +1957,7 @@ class StockAnalyzer:
 
             # 将评分标准化为0-100的范围 (原评分最高40分)
             normalized_score = int(score * 2.5)  # 将40分制转换为100分制
-            
+
             # 保存各个维度的分数 (也同样标准化)
             technical_scores = {
                 'total': normalized_score,
