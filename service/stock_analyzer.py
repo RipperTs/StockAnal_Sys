@@ -1135,30 +1135,55 @@ class StockAnalyzer:
                 }
 
             # 解析新闻数据
-            news_prompt = f"请作为一个专业的股票分析师, 然后从以下json格式的数据中提取信息:\n\n```json\n{news_response['webPages']['value']}\n```\n\n"
-            news_prompt += """要求:   
-            1. 根据提供的所有摘要内容分析市场情绪, 可选值: bullish/slightly_bullish/neutral/slightly_bearish/bearish
-            2. summary字段直接取摘要所有内容即可, 不需要再次进行总结
-            3. 你的内容必须依照提供的数据进行分析, 不得胡说八道
-            4. 最终结果返回json格式数据
-            
-            请返回以下格式的JSON数据:
-            {{
-                "news": [
-                    {{"title": "新闻标题", "date": "YYYY-MM-DD", "source": "新闻来源", "summary": "摘要字段所有内容"}},
-                    ...
-                ],
-                "announcements": [
-                    {{"title": "公告标题", "date": "YYYY-MM-DD", "type": "公告类型"}},
-                    ...
-                ],
-                "industry_news": [
-                    {{"title": "行业新闻标题", "date": "YYYY-MM-DD", "summary": "新闻摘要"}},
-                    ...
-                ],
-                "market_sentiment": "市场情绪(bullish/slightly_bullish/neutral/slightly_bearish/bearish)"
-            }}
-            """
+            news_prompt = f"请作为一个专业的金融分析师和股票市场专家，从以下JSON格式的数据中提取关键信息并进行专业分析:\n\n```json\n{news_response['webPages']['value']}\n```\n\n"
+            news_prompt += """分析要求:   
+1. 市场情绪分析：
+   - 基于提供的所有新闻摘要内容，分析当前市场情绪
+   - 情绪评级：极度看好(very_bullish)/看好(bullish)/略微看好(slightly_bullish)/中性(neutral)/略微看淡(slightly_bearish)/看淡(bearish)/极度看淡(very_bearish)
+   - 针对情绪评级提供简短依据，引用相关新闻要点
+
+2. 新闻分类标准：
+   - 公司新闻：直接与目标公司相关的新闻
+   - 公告：公司正式发布的公告、财报等官方信息
+   - 行业新闻：与公司所在行业相关，可能间接影响公司的新闻
+   
+3. 时效性要求：
+   - 优先分析最新的新闻和公告
+   - 对于超过3个月的信息，除非具有重大意义，否则降低其在分析中的权重
+
+4. 内容质量评估：
+   - 区分事实性报道与观点性评论
+   - 识别并标注可能存在偏见的信息来源
+   - 对于重复或相似内容，只保留最详细或最可靠的版本
+
+5. 数据处理规范：
+   - summary字段应包含原始摘要的完整内容，不要再次总结
+   - 日期统一格式为YYYY-MM-DD
+   - 如果无法确定具体日期，使用估计日期并在字段后添加"(estimated)"
+   
+6. 严格依据提供的数据进行分析，不得添加虚构内容或无根据的推测
+
+请返回以下格式的JSON数据:
+{
+    "news": [
+        {"title": "新闻标题", "date": "YYYY-MM-DD", "source": "新闻来源", "summary": "完整摘要内容", "impact": "正面/负面/中性", "reliability": "高/中/低"},
+        ...
+    ],
+    "announcements": [
+        {"title": "公告标题", "date": "YYYY-MM-DD", "type": "公告类型", "key_points": ["要点1", "要点2", ...], "impact": "正面/负面/中性"},
+        ...
+    ],
+    "industry_news": [
+        {"title": "行业新闻标题", "date": "YYYY-MM-DD", "summary": "新闻摘要", "relevance": "高/中/低", "impact": "正面/负面/中性"},
+        ...
+    ],
+    "market_sentiment": 市场情绪(bullish/slightly_bullish/neutral/slightly_bearish/bearish),
+    "key_insights": ["洞察1", "洞察2", ...],
+    "potential_risks": ["风险1", "风险2", ...],
+    "opportunities": ["机会1", "机会2", ...]
+}
+
+注意：如果某些字段在原始数据中缺失，可以标记为null或省略该字段。确保输出的JSON格式有效且可解析。"""
 
             messages = [{"role": "user", "content": news_prompt}]
 
