@@ -83,3 +83,4 @@ dump.rdb
 .env.test.local
 .env.production.local
 .idea
+stock_filter_results

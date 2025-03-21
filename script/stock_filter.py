@@ -1038,7 +1038,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="股票筛选工具")
     parser.add_argument("--min_pe", type=float, default=5, help="最小市盈率")
     parser.add_argument("--max_pe", type=float, default=15, help="最大市盈率")
-    parser.add_argument("--market", type=str, default="A", help="市场类型：US(美股)、HK(港股)、A(A股)")
+    parser.add_argument("--market", type=str, default="US", help="市场类型：US(美股)、HK(港股)、A(A股)")
     parser.add_argument("--parallel", action="store_true", help="启用并行处理提高效率")
     parser.add_argument("--test", action="store_true", help="测试模式，只处理少量样本股票")
     parser.add_argument("--strategies", type=str, default="all",
