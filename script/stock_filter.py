@@ -149,27 +149,27 @@ def get_stock_history(stock_code, period="5y", use_cache=True, cache_dir=None):
         return None
 
 
-def filter_by_volume_surge(stock_info, min_volume_ratio=2.5, min_price=5.0, lookback_period=252):
+def filter_by_volume_surge(stock_info, min_volume_ratio=2.5, min_price=5.0):
     """
-    策略1: 历史底部区域附近出现持续放量
+    策略1: 历史底部区域附近出现持续放量并形成反转形态
     检测特征:
     1. 处于历史底部区域(30%以内)
-    2. 最近一周至两周内出现明显放量(单日爆量或持续放量)
-    3. 股价形态开始走稳或有小幅上涨趋势
+    2. 最近一周至两周内出现明显持续放量
+    3. 放量同时价格形成反转形态，从下跌到企稳/上涨
     4. 当前股价大于5美元
+    5. 排除长期成交量太低的股票(流动性差)
     
     Args:
         stock_info (StockInfo): 股票信息
         min_volume_ratio (float): 放量倍数(相对于之前均值)
         min_price (float): 最小股价(美元)
-        lookback_period (int): 用于确定历史底部的回溯周期(交易日)
         
     Returns:
         bool: 是否符合条件
     """
     # 获取历史数据(5年)用于确定历史底部
     history = get_stock_history(stock_info.stock_code)
-    if history is None or len(history) < lookback_period:  # 至少需要lookback_period个交易日的数据
+    if history is None or len(history) < 60:  # 至少需要60个交易日的数据
         return False
     
     try:
@@ -177,116 +177,184 @@ def filter_by_volume_surge(stock_info, min_volume_ratio=2.5, min_price=5.0, look
         
         # 计算价格的历史百分位
         prices = history['Close'].values
-        volumes = history['Volume'].values
         
-        # 检查价格和成交量数据是否有效
-        if len(prices) == 0 or np.isnan(prices).any() or len(volumes) == 0 or np.isnan(volumes).any():
+        # 检查价格数据是否有效
+        if len(prices) == 0 or np.isnan(prices).any():
             return False
         
         # 检查当前股价是否大于最小要求
         current_price = prices[-1]
         if current_price < min_price:
             return False
+            
+        min_price = np.min(prices)
+        max_price = np.max(prices)
+        price_range = max_price - min_price
         
-        # 使用部分数据计算底部区域（考虑近期数据更有代表性）
-        recent_period = min(lookback_period, len(prices))
-        recent_prices = prices[-recent_period:]
-        min_price_recent = np.min(recent_prices)
-        max_price_recent = np.max(recent_prices)
-        
-        # 考虑全部历史数据
-        min_price_all = np.min(prices)
-        max_price_all = np.max(prices)
-        
-        # 综合考虑全局和局部最小值
-        min_price_value = max(min_price_all, min_price_recent * 0.9)  # 稍微低于近期最低价
-        price_range_recent = max_price_recent - min_price_recent
-        price_range_all = max_price_all - min_price_all
-        
-        # 避免除以零
-        if price_range_recent == 0 or price_range_all == 0:
+        if price_range == 0:  # 避免除以零
             return False
         
-        # 计算当前价格在近期和全局范围的百分位
-        percentile_recent = (current_price - min_price_recent) / price_range_recent
-        percentile_all = (current_price - min_price_all) / price_range_all
+        # 计算每个价格点的百分位
+        percentiles = [(price - min_price) / price_range for price in prices]
         
-        # 使用加权平均综合考虑近期和全局百分位
-        weight_recent = 0.7  # 给近期百分位更高的权重
-        percentile_weighted = weight_recent * percentile_recent + (1 - weight_recent) * percentile_all
+        # 检查成交量变化
+        volumes = history['Volume'].values
+        
+        # 检查成交量数据是否有效
+        if len(volumes) == 0 or np.isnan(volumes).any():
+            return False
         
         # 检查当前是否处于历史底部区域(30%以内)
-        if percentile_weighted > 0.3:
+        if percentiles[-1] > 0.3:
             return False
         
-        # 计算成交量相关指标
-        # 1. 计算成交量的移动平均
-        ma_volume_10 = np.mean(volumes[-10:])    # 10日均量
-        ma_volume_20 = np.mean(volumes[-20:])    # 20日均量
-        ma_volume_50 = np.mean(volumes[-50:])    # 50日均量
+        # 确定是否经历了长期下跌后到达底部
+        # 检查最近6个月和3个月的趋势
+        lookback_120 = min(120, len(prices)-1)  # 约6个月
+        lookback_60 = min(60, len(prices)-1)   # 约3个月
         
-        # 2. 计算最近成交量与均量的比率
-        volume_ratio_10_50 = ma_volume_10 / ma_volume_50 if ma_volume_50 > 0 else 0
-        volume_ratio_20_50 = ma_volume_20 / ma_volume_50 if ma_volume_50 > 0 else 0
+        price_trend_120d = prices[-1] / prices[-lookback_120] - 1
+        price_trend_60d = prices[-1] / prices[-lookback_60] - 1
         
-        # 3. 计算最近5日和10日的单日量比
-        recent_5d_volume_ratios = [volumes[-i] / ma_volume_50 for i in range(1, 6)] if ma_volume_50 > 0 else [0] * 5
-        recent_10d_volume_ratios = [volumes[-i] / ma_volume_50 for i in range(1, 11)] if ma_volume_50 > 0 else [0] * 10
+        # 确认是处于下跌后的底部区域，而不是上升或横盘区域
+        is_after_decline = price_trend_120d < -0.15 or price_trend_60d < -0.1
+        if not is_after_decline:
+            return False
         
-        # 4. 计算高成交量日数
-        high_volume_days_5d = sum(1 for ratio in recent_5d_volume_ratios if ratio > min_volume_ratio)
-        high_volume_days_10d = sum(1 for ratio in recent_10d_volume_ratios if ratio > min_volume_ratio)
+        # 计算基本面数据 - 用于检查交易活跃度
+        historical_volumes = volumes[-252:] if len(volumes) >= 252 else volumes  # 使用过去一年数据
         
-        # 5. 单日爆量
-        max_volume_ratio = max(recent_10d_volume_ratios) if recent_10d_volume_ratios else 0
-        max_volume_day = recent_10d_volume_ratios.index(max_volume_ratio) + 1 if max_volume_ratio > 0 else 0
+        # 1. 检查历史成交量的有效交易日比例 - 排除长期无交易的股票
+        # 有效交易的定义：成交量不为零或不低于某个最小阈值
+        min_volume_threshold = 10000  # 最小成交量阈值，根据实际情况调整
+        valid_trading_days = sum(1 for vol in historical_volumes if vol > min_volume_threshold)
+        valid_trading_ratio = valid_trading_days / len(historical_volumes)
         
-        # 计算最近价格稳定性和趋势
-        recent_prices = prices[-10:]
-        price_std = np.std(recent_prices) / np.mean(recent_prices) if np.mean(recent_prices) > 0 else 0  # 价格波动率
-        price_trend = prices[-1] / prices[-10] - 1 if prices[-10] > 0 else 0
+        # 要求至少80%的交易日有足够的成交量
+        if valid_trading_ratio < 0.8:
+            return False
         
-        # 使用技术指标
-        # 相对强弱指数(RSI)
-        rsi = get_rsi(prices, period=14)[-1]
+        # 2. 计算历史成交量的平均和中位数
+        avg_historical_volume = np.mean(historical_volumes)
+        median_historical_volume = np.median(historical_volumes)
         
-        # 计算MACD
-        macd, signal, hist = get_macd(prices, fast_period=12, slow_period=26, signal_period=9)
-        macd_latest = macd[-1]
-        signal_latest = signal[-1]
-        hist_latest = hist[-1]
+        # 3. 检查是否是流动性极差的股票 - 平均成交量过低
+        # 这里使用美股市场的经验值，可根据不同市场调整
+        if avg_historical_volume < 50000:  # 日均成交量太低
+            return False
         
-        # 计算布林带
-        upper, middle, lower = get_bbands(prices, period=20, num_std_dev=2)
-        bb_position = (prices[-1] - lower[-1]) / (upper[-1] - lower[-1]) if (upper[-1] - lower[-1]) > 0 else 0.5
+        # 4. 检查成交量的稳定性和连续性
+        # 计算成交量的变异系数(CV) - 标准差/均值，较高的CV表示成交量波动大
+        volume_std = np.std(historical_volumes)
+        volume_cv = volume_std / avg_historical_volume if avg_historical_volume > 0 else float('inf')
         
-        # 考虑技术指标的底部确认
-        is_technical_bottom = (
-            rsi < 40 and  # RSI较低
-            bb_position < 0.3 and  # 靠近布林带下轨
-            hist_latest > hist[-2] and  # MACD柱状图向上
-            price_trend > -0.03  # 价格没有持续下跌
-        )
+        # 如果变异系数过高(>5)，说明成交量非常不稳定，常见于流动性差的股票
+        if volume_cv > 5:
+            # 进一步检查高CV是否由少数几天的异常成交量导致
+            sorted_hist_volumes = sorted(historical_volumes)
+            # 去除最高10%的成交量后重新计算
+            trimmed_volumes = sorted_hist_volumes[:int(len(sorted_hist_volumes) * 0.9)]
+            trimmed_mean = np.mean(trimmed_volumes)
+            
+            # 检查修剪后的均值是否仍然足够高
+            if trimmed_mean < 30000:
+                return False
         
-        # 综合判断条件 (多选一):
-        # 1. 10日均量是50日均量的1.8倍以上
-        condition1 = volume_ratio_10_50 >= 1.8
-        # 2. 20日均量是50日均量的1.5倍以上
-        condition2 = volume_ratio_20_50 >= 1.5
-        # 3. 10天内有2天以上成交量是均值的2.5倍以上
-        condition3 = high_volume_days_10d >= 2
-        # 4. 5天内有1天以上成交量是均值的2.5倍以上
-        condition4 = high_volume_days_5d >= 1
-        # 5. 单日爆量：任一天成交量是均值的3倍以上且在最近5天内
-        condition5 = max_volume_ratio >= 3.0 and max_volume_day <= 5
-        # 6. 价格处于底部区域且有任何明显放量(单日2倍)，同时价格开始走稳或上涨
-        condition6 = (percentile_weighted <= 0.2 and max(volumes[-10:]) > ma_volume_50 * 2.0 and 
-                     (price_std < 0.05 or price_trend >= 0.05))  # 非常低的位置有放量且价格稳定或上涨
+        # 获取基准期的成交量
+        base_volumes = volumes[-60:-10]  # 排除最近10天
         
-        # 添加技术指标条件
-        condition7 = is_technical_bottom and high_volume_days_5d >= 1
+        # 使用中位数代替均值作为基准，避免异常值影响
+        base_volume_median = np.median(base_volumes)
+        if base_volume_median <= 0:
+            return False
         
-        if condition1 or condition2 or condition3 or condition4 or condition5 or condition6 or condition7:
+        # 计算最近10个交易日的成交量
+        recent_volumes = volumes[-10:]
+        
+        # 计算最近5个交易日的成交量
+        recent_5d_volumes = volumes[-5:]
+        
+        # 计算连续的高成交量日
+        consecutive_high_vol_days = 0
+        max_consecutive = 0
+        
+        for vol in recent_volumes:
+            if vol > base_volume_median * 1.5:
+                consecutive_high_vol_days += 1
+                max_consecutive = max(max_consecutive, consecutive_high_vol_days)
+            else:
+                consecutive_high_vol_days = 0
+        
+        # 计算高成交量日的数量
+        high_volume_days = sum(1 for vol in recent_volumes if vol > base_volume_median * min_volume_ratio)
+        high_volume_days_5d = sum(1 for vol in recent_5d_volumes if vol > base_volume_median * min_volume_ratio)
+        
+        # 确认持续放量 - 至少有连续3天成交量超过基准的1.5倍，或者有3天以上超过基准的2.5倍
+        has_sustained_volume = max_consecutive >= 3 or high_volume_days >= 3
+        
+        # 如果没有持续放量特征，直接返回False
+        if not has_sustained_volume:
+            return False
+        
+        # 确认价格反转形态
+        # 最近10天和5天价格走势
+        price_trend_10d = prices[-1] / prices[-10] - 1 if len(prices) >= 10 else 0
+        price_trend_5d = prices[-1] / prices[-5] - 1 if len(prices) >= 5 else 0
+        
+        # 计算出现放量的具体日期并检查对应的价格走势
+        volume_surge_days = []
+        for i in range(1, 11):
+            if i < len(volumes) and volumes[-i] > base_volume_median * min_volume_ratio:
+                volume_surge_days.append(-i)
+        
+        # 检查放量日后的价格走势
+        price_improves_after_surge = False
+        if volume_surge_days:
+            # 对于每个放量日，检查之后3天的价格走势
+            for day in volume_surge_days:
+                if day+3 < 0:  # 确保有足够数据检查后续3天
+                    max_price_after = max(prices[day:day+3])
+                    surge_day_price = prices[day]
+                    if max_price_after > surge_day_price * 1.02:  # 放量后价格上涨超过2%
+                        price_improves_after_surge = True
+                        break
+        
+        # 确认最近的底部形态 - 检查最近10天内的最低价是否出现在前5天
+        recent_10d_prices = prices[-10:]
+        min_price_idx = np.argmin(recent_10d_prices)
+        bottom_forms_recently = min_price_idx < 5  # 最低点在前5天
+        
+        # V型反转：价格先跌后涨，且最近几天持续上涨
+        v_reversal = False
+        if len(prices) >= 10:
+            # 价格见底后连续上涨
+            if min_price_idx < 5 and price_trend_5d > 0.03:
+                v_reversal = True
+                
+        # 判断条件组合：
+        
+        # 1. 基本条件：在底部区域 + 有持续放量 + 价格开始好转
+        basic_condition = (percentiles[-1] <= 0.3 and 
+                           has_sustained_volume and 
+                           price_trend_5d >= 0.01)
+        
+        # 2. 强烈持续放量特征：连续多日高于基准的放量 + 价格明确上涨
+        strong_volume_surge = (max_consecutive >= 3 and 
+                              high_volume_days >= 2 and 
+                              price_trend_5d > 0.02)
+        
+        # 3. 典型的底部放量反转：在历史底部有明显放量 + 形成V型反转
+        typical_reversal = (percentiles[-1] <= 0.25 and 
+                           high_volume_days >= 2 and 
+                           v_reversal)
+        
+        # 4. 放量后价格明显改善：在底部区域 + 持续放量后价格上涨
+        post_surge_improvement = (percentiles[-1] <= 0.3 and 
+                                 high_volume_days >= 3 and
+                                 price_improves_after_surge)
+        
+        # 综合判断
+        if basic_condition and (strong_volume_surge or typical_reversal or post_surge_improvement):
             return True
                     
         return False
