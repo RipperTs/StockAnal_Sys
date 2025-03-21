@@ -12,14 +12,21 @@ import requests
 import json
 
 
-def getStockList(page: int = 1, size: int = 90):
+def getStockList(page: int = 1, size: int = 90, market_type: str = "US") -> list:
     """
     从雪球获取所有美股股票信息
     https://finance.sina.com.cn/stock/usstock/sector.shtml
     page: 页码
     size: 每页数量, 20,40,60
     """
-    url = f"https://stock.xueqiu.com/v5/stock/screener/quote/list.json?page={page}&size={size}&order=desc&order_by=percent&market=US&type=us"
+    url = f"https://stock.xueqiu.com/v5/stock/screener/quote/list.json?page={page}&size={size}&order=desc&order_by=percent"
+    if market_type == "US":
+        url += "&market=US&type=us"
+    elif market_type == "A":
+        url += "&market=CN&type=sh_sz"
+    else:
+        return []
+
     headers = {
         "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.114 Safari/537.",
         "cookie": "xq_a_token=ded7d04ca80c7e01078faaba6910b799630b71d4;u=2525085352"
@@ -37,6 +44,8 @@ def getStockList(page: int = 1, size: int = 90):
 
 
 if __name__ == '__main__':
+
+    market_type = "US"
     init_db()
 
     # 连接数据库
@@ -44,8 +53,8 @@ if __name__ == '__main__':
 
     try:
         # 清空现有的美股数据
-        print("正在清空数据库中的美股数据...")
-        session.query(StockInfo).filter(StockInfo.market_type == "US").delete()
+        print(f"正在清空数据库中的{market_type}股票数据...")
+        session.query(StockInfo).filter(StockInfo.market_type == market_type).delete()
         session.commit()
 
         page = 1
@@ -53,8 +62,8 @@ if __name__ == '__main__':
         batch_data = []
 
         while True:  # 修正循环条件
-            print(f"正在获取第 {page} 页的美股数据...")
-            lists = getStockList(page)
+            print(f"正在获取第 {page} 页的数据...")
+            lists = getStockList(page=page, market_type=market_type)
             if not lists:
                 print(f"第 {page} 页没有数据，停止获取")
                 break
@@ -63,7 +72,7 @@ if __name__ == '__main__':
                 stock_info = StockInfo(
                     stock_code=item["symbol"],
                     stock_name=item["name"],
-                    market_type="US",
+                    market_type=market_type,
                     industry="",
                     pe_ratio=item['pe_ttm'])
 
@@ -73,7 +82,7 @@ if __name__ == '__main__':
                 if len(batch_data) >= batch_size:
                     session.add_all(batch_data)
                     session.commit()
-                    print(f"批量插入了 {len(batch_data)} 条美股数据")
+                    print(f"批量插入了 {len(batch_data)} 条{market_type}股票数据数据")
                     batch_data = []
 
             page += 1
@@ -83,11 +92,11 @@ if __name__ == '__main__':
         if batch_data:
             session.add_all(batch_data)
             session.commit()
-            print(f"批量插入了 {len(batch_data)} 条美股数据")
+            print(f"批量插入了 {len(batch_data)} 条{market_type}股票数据数据")
 
-        print("美股数据更新完成")
+        print("数据更新完成")
     except Exception as e:
         session.rollback()
-        print(f"更新美股数据时发生错误: {e}")
+        print(f"更新数据时发生错误: {e}")
     finally:
         session.close()
