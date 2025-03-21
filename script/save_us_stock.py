@@ -45,7 +45,7 @@ def getStockList(page: int = 1, size: int = 90, market_type: str = "US") -> list
 
 if __name__ == '__main__':
 
-    market_type = "US"
+    market_type = "A"
     init_db()
 
     # 连接数据库
