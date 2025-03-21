@@ -17,3 +17,5 @@ DEBUG = os.getenv('DEBUG', 'False').lower() == 'true'
 PORT = int(os.getenv('PORT', 8888))
 
 BOCHA_API_KEY = os.getenv('BOCHA_API_KEY','')
+
+XUEQIU_COOKIE = os.getenv('XUEQIU_COOKIE','')
