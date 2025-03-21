@@ -31,3 +31,5 @@ pytest  # 测试框架
 supervisor==4.2.5  # 进程管理
 redis==4.5.4  # 可选的缓存后端
 pysnowball
+scipy
+TA-Lib

@@ -40,29 +40,55 @@ def filter_by_pe_ratio(min_pe=5, max_pe=50, market_type="US"):
     return filtered_stocks
 
 
-def get_stock_history(stock_code, period="5y"):
+def get_stock_history(stock_code, period="5y", use_cache=True, cache_dir=None):
     """
-    使用yfinance获取股票的历史价格和交易量数据
+    使用yfinance获取股票的历史价格和交易量数据，支持本地缓存
     
     Args:
         stock_code (str): 股票代码
         period (str): 获取数据的时间范围，默认为5年
             可选值: 1d,5d,1mo,3mo,6mo,1y,2y,5y,10y,ytd,max
+        use_cache (bool): 是否使用缓存
+        cache_dir (str): 缓存目录，默认为项目根目录下的'data/stock_history'
         
     Returns:
         pandas.DataFrame: 股票历史数据
     """
     try:
         import yfinance as yf
+        import os
+        import pandas as pd
+        from datetime import datetime, timedelta
         
-        # 可能需要处理一下股票代码格式
-        # 美股代码通常不需要额外处理
-        symbol = stock_code
+        # 设置缓存目录
+        if cache_dir is None:
+            current_dir = os.path.dirname(os.path.abspath(__file__))
+            parent_dir = os.path.dirname(current_dir)
+            cache_dir = os.path.join(parent_dir, 'data', 'stock_history')
+        
+        # 确保缓存目录存在
+        if use_cache and not os.path.exists(cache_dir):
+            os.makedirs(cache_dir)
+        
+        # 缓存文件路径
+        cache_file = os.path.join(cache_dir, f"{stock_code}_{period}.csv") if use_cache else None
+        
+        # 检查缓存是否存在且未过期（24小时内）
+        if use_cache and os.path.exists(cache_file):
+            file_time = datetime.fromtimestamp(os.path.getmtime(cache_file))
+            if datetime.now() - file_time < timedelta(hours=24):
+                # 从缓存加载数据
+                try:
+                    cached_data = pd.read_csv(cache_file, index_col=0, parse_dates=True)
+                    if not cached_data.empty:
+                        return cached_data
+                except Exception as e:
+                    print(f"读取缓存数据失败: {e}，将重新获取")
         
         # 创建Ticker对象
-        ticker = yf.Ticker(symbol)
+        ticker = yf.Ticker(stock_code)
         
-        # 配置获取历史数据的参数
+        # 配置获取历史数据的参数 - 移除不支持的参数
         kwargs = {
             'period': period,      # 时间范围
             'interval': '1d',      # 数据粒度：日数据
@@ -71,7 +97,19 @@ def get_stock_history(stock_code, period="5y"):
         }
         
         # 获取历史数据
-        history = ticker.history(**kwargs)
+        try:
+            history = ticker.history(**kwargs)
+        except TypeError as e:
+            if "unexpected keyword argument" in str(e):
+                # 尝试移除可能导致问题的参数
+                problematic_params = ['progress', 'proxy', 'timeout', 'raise_errors']
+                for param in problematic_params:
+                    if param in kwargs:
+                        del kwargs[param]
+                # 重试
+                history = ticker.history(**kwargs)
+            else:
+                raise
         
         # 检查是否成功获取到数据
         if history is None or history.empty:
@@ -89,6 +127,17 @@ def get_stock_history(stock_code, period="5y"):
         if len(history) < 20:  # 至少需要20个交易日的数据
             print(f"股票 {stock_code} 的历史数据不足 (仅有 {len(history)} 个交易日)")
             return None
+        
+        # 数据清洗：处理缺失值和异常值
+        # 填充缺失值
+        history = history.ffill()
+        
+        # 处理异常值：成交量为0的数据用前一个交易日的值填充
+        history.loc[history['Volume'] <= 0, 'Volume'] = history['Volume'].shift(1)
+        
+        # 保存到缓存
+        if use_cache:
+            history.to_csv(cache_file)
             
         return history
         
@@ -100,12 +149,12 @@ def get_stock_history(stock_code, period="5y"):
         return None
 
 
-def filter_by_volume_surge(stock_info, min_volume_ratio=2.5, min_price=5.0):
+def filter_by_volume_surge(stock_info, min_volume_ratio=2.5, min_price=5.0, lookback_period=252):
     """
     策略1: 历史底部区域附近出现持续放量
     检测特征:
     1. 处于历史底部区域(30%以内)
-    2. 最近两周(10个交易日)出现明显持续放量
+    2. 最近一周至两周内出现明显放量(单日爆量或持续放量)
     3. 股价形态开始走稳或有小幅上涨趋势
     4. 当前股价大于5美元
     
@@ -113,81 +162,131 @@ def filter_by_volume_surge(stock_info, min_volume_ratio=2.5, min_price=5.0):
         stock_info (StockInfo): 股票信息
         min_volume_ratio (float): 放量倍数(相对于之前均值)
         min_price (float): 最小股价(美元)
+        lookback_period (int): 用于确定历史底部的回溯周期(交易日)
         
     Returns:
         bool: 是否符合条件
     """
     # 获取历史数据(5年)用于确定历史底部
     history = get_stock_history(stock_info.stock_code)
-    if history is None or len(history) < 60:  # 至少需要60个交易日的数据
+    if history is None or len(history) < lookback_period:  # 至少需要lookback_period个交易日的数据
         return False
     
     try:
+        import numpy as np
+        
         # 计算价格的历史百分位
         prices = history['Close'].values
+        volumes = history['Volume'].values
         
-        # 检查价格数据是否有效
-        if len(prices) == 0 or np.isnan(prices).any():
+        # 检查价格和成交量数据是否有效
+        if len(prices) == 0 or np.isnan(prices).any() or len(volumes) == 0 or np.isnan(volumes).any():
             return False
         
         # 检查当前股价是否大于最小要求
         current_price = prices[-1]
         if current_price < min_price:
             return False
-            
-        min_price = np.min(prices)
-        max_price = np.max(prices)
-        price_range = max_price - min_price
         
-        if price_range == 0:  # 避免除以零
+        # 使用部分数据计算底部区域（考虑近期数据更有代表性）
+        recent_period = min(lookback_period, len(prices))
+        recent_prices = prices[-recent_period:]
+        min_price_recent = np.min(recent_prices)
+        max_price_recent = np.max(recent_prices)
+        
+        # 考虑全部历史数据
+        min_price_all = np.min(prices)
+        max_price_all = np.max(prices)
+        
+        # 综合考虑全局和局部最小值
+        min_price_value = max(min_price_all, min_price_recent * 0.9)  # 稍微低于近期最低价
+        price_range_recent = max_price_recent - min_price_recent
+        price_range_all = max_price_all - min_price_all
+        
+        # 避免除以零
+        if price_range_recent == 0 or price_range_all == 0:
             return False
         
-        # 计算每个价格点的百分位
-        percentiles = [(price - min_price) / price_range for price in prices]
+        # 计算当前价格在近期和全局范围的百分位
+        percentile_recent = (current_price - min_price_recent) / price_range_recent
+        percentile_all = (current_price - min_price_all) / price_range_all
         
-        # 检查成交量变化
-        volumes = history['Volume'].values
-        
-        # 检查成交量数据是否有效
-        if len(volumes) == 0 or np.isnan(volumes).any():
-            return False
-        
-        # 只关注最近两周的交易日(约10个交易日)
-        lookback_days = min(10, len(history))
+        # 使用加权平均综合考虑近期和全局百分位
+        weight_recent = 0.7  # 给近期百分位更高的权重
+        percentile_weighted = weight_recent * percentile_recent + (1 - weight_recent) * percentile_all
         
         # 检查当前是否处于历史底部区域(30%以内)
-        if percentiles[-1] > 0.3:
+        if percentile_weighted > 0.3:
             return False
         
-        # 计算最近10个交易日的平均成交量
-        recent_avg_volume = np.mean(volumes[-lookback_days:])
-        # 计算之前30个交易日的平均成交量
-        previous_avg_volume = np.mean(volumes[-40:-lookback_days])
+        # 计算成交量相关指标
+        # 1. 计算成交量的移动平均
+        ma_volume_10 = np.mean(volumes[-10:])    # 10日均量
+        ma_volume_20 = np.mean(volumes[-20:])    # 20日均量
+        ma_volume_50 = np.mean(volumes[-50:])    # 50日均量
         
-        # 检查近期平均成交量是否显著高于之前
-        volume_increase_ratio = recent_avg_volume / previous_avg_volume if previous_avg_volume > 0 else 0
+        # 2. 计算最近成交量与均量的比率
+        volume_ratio_10_50 = ma_volume_10 / ma_volume_50 if ma_volume_50 > 0 else 0
+        volume_ratio_20_50 = ma_volume_20 / ma_volume_50 if ma_volume_50 > 0 else 0
         
-        # 检查是否有连续放量
-        high_volume_days = 0
-        for i in range(1, lookback_days+1):  # 检查最近10天
-            if volumes[-i] > previous_avg_volume * min_volume_ratio:
-                high_volume_days += 1
-                
+        # 3. 计算最近5日和10日的单日量比
+        recent_5d_volume_ratios = [volumes[-i] / ma_volume_50 for i in range(1, 6)] if ma_volume_50 > 0 else [0] * 5
+        recent_10d_volume_ratios = [volumes[-i] / ma_volume_50 for i in range(1, 11)] if ma_volume_50 > 0 else [0] * 10
+        
+        # 4. 计算高成交量日数
+        high_volume_days_5d = sum(1 for ratio in recent_5d_volume_ratios if ratio > min_volume_ratio)
+        high_volume_days_10d = sum(1 for ratio in recent_10d_volume_ratios if ratio > min_volume_ratio)
+        
+        # 5. 单日爆量
+        max_volume_ratio = max(recent_10d_volume_ratios) if recent_10d_volume_ratios else 0
+        max_volume_day = recent_10d_volume_ratios.index(max_volume_ratio) + 1 if max_volume_ratio > 0 else 0
+        
         # 计算最近价格稳定性和趋势
-        recent_prices = prices[-lookback_days:]
-        price_std = np.std(recent_prices) / np.mean(recent_prices)  # 价格波动率
-        price_trend = prices[-1] / prices[-lookback_days] - 1 if prices[-lookback_days] > 0 else 0
+        recent_prices = prices[-10:]
+        price_std = np.std(recent_prices) / np.mean(recent_prices) if np.mean(recent_prices) > 0 else 0  # 价格波动率
+        price_trend = prices[-1] / prices[-10] - 1 if prices[-10] > 0 else 0
         
-        # 判断条件 (三选一):
-        # 1. 最近平均成交量是之前的1.8倍以上
-        # 2. 10天内有2天以上成交量是之前均值的2.5倍以上
-        # 3. 价格处于底部区域且有任何明显放量(单日2倍)，同时价格开始走稳
-        condition1 = volume_increase_ratio >= 1.8
-        condition2 = high_volume_days >= 2
-        condition3 = (percentiles[-1] <= 0.2 and max(volumes[-lookback_days:]) > previous_avg_volume * 2.0 and 
-                      price_std < 0.05 and price_trend >= -0.02)  # 非常低的位置有放量且价格稳定
+        # 使用技术指标
+        # 相对强弱指数(RSI)
+        rsi = get_rsi(prices, period=14)[-1]
         
-        if condition1 or condition2 or condition3:
+        # 计算MACD
+        macd, signal, hist = get_macd(prices, fast_period=12, slow_period=26, signal_period=9)
+        macd_latest = macd[-1]
+        signal_latest = signal[-1]
+        hist_latest = hist[-1]
+        
+        # 计算布林带
+        upper, middle, lower = get_bbands(prices, period=20, num_std_dev=2)
+        bb_position = (prices[-1] - lower[-1]) / (upper[-1] - lower[-1]) if (upper[-1] - lower[-1]) > 0 else 0.5
+        
+        # 考虑技术指标的底部确认
+        is_technical_bottom = (
+            rsi < 40 and  # RSI较低
+            bb_position < 0.3 and  # 靠近布林带下轨
+            hist_latest > hist[-2] and  # MACD柱状图向上
+            price_trend > -0.03  # 价格没有持续下跌
+        )
+        
+        # 综合判断条件 (多选一):
+        # 1. 10日均量是50日均量的1.8倍以上
+        condition1 = volume_ratio_10_50 >= 1.8
+        # 2. 20日均量是50日均量的1.5倍以上
+        condition2 = volume_ratio_20_50 >= 1.5
+        # 3. 10天内有2天以上成交量是均值的2.5倍以上
+        condition3 = high_volume_days_10d >= 2
+        # 4. 5天内有1天以上成交量是均值的2.5倍以上
+        condition4 = high_volume_days_5d >= 1
+        # 5. 单日爆量：任一天成交量是均值的3倍以上且在最近5天内
+        condition5 = max_volume_ratio >= 3.0 and max_volume_day <= 5
+        # 6. 价格处于底部区域且有任何明显放量(单日2倍)，同时价格开始走稳或上涨
+        condition6 = (percentile_weighted <= 0.2 and max(volumes[-10:]) > ma_volume_50 * 2.0 and 
+                     (price_std < 0.05 or price_trend >= 0.05))  # 非常低的位置有放量且价格稳定或上涨
+        
+        # 添加技术指标条件
+        condition7 = is_technical_bottom and high_volume_days_5d >= 1
+        
+        if condition1 or condition2 or condition3 or condition4 or condition5 or condition6 or condition7:
             return True
                     
         return False
@@ -213,41 +312,98 @@ def filter_by_pullback_50_percent(stock_info):
         return False
     
     try:
+        import numpy as np
+        
+        # 尝试导入scipy的argrelextrema
+        try:
+            from scipy.signal import argrelextrema
+            has_scipy = True
+        except ImportError:
+            has_scipy = False
+        
+        # 获取价格数据
         prices = history['Close'].values
         
         # 检查价格数据是否有效
         if len(prices) == 0 or np.isnan(prices).any():
             return False
         
-        # 找到历史上所有的主要低点
-        low_points = []
-        for i in range(1, len(prices) - 1):
-            if prices[i-1] > prices[i] < prices[i+1]:
-                low_points.append((i, prices[i]))
-        
-        # 按价格从低到高排序
-        low_points.sort(key=lambda x: x[1])
-        
-        # 检查每个低点是否满足条件
-        for start_idx, start_price in low_points[:3]:  # 考虑3个最低点
-            # 从低点寻找随后的最高点
-            max_idx = start_idx
-            max_price = start_price
+        # 寻找局部最小值和最大值
+        if has_scipy:
+            # 使用更先进的极值点检测方法 - scipy的argrelextrema函数
+            # 检测局部最小值点（谷底）
+            order = 10  # 窗口大小，用于确定局部极值
+            local_min_indices = argrelextrema(prices, np.less, order=order)[0]
             
-            for i in range(start_idx + 1, len(prices)):
-                if prices[i] > max_price:
-                    max_price = prices[i]
-                    max_idx = i
+            # 检测局部最大值点（峰顶）
+            local_max_indices = argrelextrema(prices, np.greater, order=order)[0]
             
-            # 如果价格已经翻倍
-            if max_price >= start_price * 2:
-                # 检查最高点之后是否有回调50%
-                for i in range(max_idx + 1, len(prices)):
-                    pullback = (max_price - prices[i]) / (max_price - start_price)
-                    if pullback >= 0.5:  # 回调幅度超过50%
-                        # 确保回调完成点在最近6个月内
-                        if i >= (len(prices) - 126):  # 约6个月的交易日
-                            return True
+            # 过滤小波动的峰谷，保留显著的波动
+            significant_mins = []
+            for idx in local_min_indices:
+                # 前后order个点的平均值
+                surrounding_avg = np.mean(prices[max(0, idx-order):min(len(prices), idx+order+1)])
+                # 如果波谷比周围平均值低5%以上，认为是显著波谷
+                if prices[idx] < surrounding_avg * 0.95:
+                    significant_mins.append(idx)
+            
+            significant_maxs = []
+            for idx in local_max_indices:
+                # 前后order个点的平均值
+                surrounding_avg = np.mean(prices[max(0, idx-order):min(len(prices), idx+order+1)])
+                # 如果波峰比周围平均值高5%以上，认为是显著波峰
+                if prices[idx] > surrounding_avg * 1.05:
+                    significant_maxs.append(idx)
+        else:
+            # 使用简化的极值点检测方法
+            significant_mins = []
+            significant_maxs = []
+            
+            # 只检查局部最小值和最大值
+            for i in range(1, len(prices) - 1):
+                if prices[i-1] > prices[i] < prices[i+1]:  # 局部最小值
+                    significant_mins.append(i)
+                elif prices[i-1] < prices[i] > prices[i+1]:  # 局部最大值
+                    significant_maxs.append(i)
+        
+        # 按时间排序，找出波谷-波峰-回调的组合
+        for bottom_idx in significant_mins:
+            # 寻找底部之后的峰顶
+            potential_tops = [idx for idx in significant_maxs if idx > bottom_idx]
+            if not potential_tops:
+                continue
+                
+            for top_idx in potential_tops:
+                bottom_price = prices[bottom_idx]
+                top_price = prices[top_idx]
+                
+                # 判断是否满足"起涨翻倍"条件
+                if top_price >= bottom_price * 2:
+                    # 找出峰顶之后的所有价格点
+                    pullback_indices = [i for i in range(top_idx + 1, len(prices))]
+                    
+                    # 检查峰顶之后是否有回调满足条件（回调50%）
+                    for pullback_idx in pullback_indices:
+                        pullback_price = prices[pullback_idx]
+                        pullback_ratio = (top_price - pullback_price) / (top_price - bottom_price)
+                        
+                        # 判断是否满足回调条件
+                        if 0.5 <= pullback_ratio <= 0.6:  # 0.6是为了避免回调过深
+                            # 确保回调完成点在最近6个月内（约126个交易日）
+                            if pullback_idx >= (len(prices) - 126):
+                                
+                                # 进一步确认回调企稳
+                                # 检查回调后的10个交易日是否形成底部企稳
+                                if pullback_idx + 10 < len(prices):
+                                    after_pullback = prices[pullback_idx:pullback_idx+10]
+                                    # 企稳条件：最低价不低于回调价格的2%，最高价不高于回调价格的5%
+                                    min_after = min(after_pullback)
+                                    max_after = max(after_pullback)
+                                    if min_after >= pullback_price * 0.98 and max_after <= pullback_price * 1.05:
+                                        # 使用RSI判断是否超卖
+                                        rsi = get_rsi(prices, period=14)[pullback_idx]
+                                        if rsi < 40:  # RSI低于40表示超卖
+                                            return True
         
         return False
     except Exception as e:
@@ -272,47 +428,118 @@ def filter_by_initial_pullback_20_percent(stock_info):
         return False
     
     try:
+        import numpy as np
+        
+        # 尝试导入scipy的argrelextrema
+        try:
+            from scipy.signal import argrelextrema
+            has_scipy = True
+        except ImportError:
+            has_scipy = False
+        
+        # 获取价格数据
         prices = history['Close'].values
+        volumes = history['Volume'].values
+        dates = history.index
         
         # 检查价格数据是否有效
         if len(prices) == 0 or np.isnan(prices).any():
             return False
         
-        # 寻找历史底部
-        min_idx = np.argmin(prices)
-        min_price = prices[min_idx]
+        # 使用技术分析找出明显的底部
+        # 1. 使用价格和成交量的综合判断
+        # 2. 使用RSI判断超卖区域
+        # 3. 使用MACD判断底背离
         
-        # 如果底部是最近的价格，不符合我们的策略
-        if min_idx >= len(prices) - 20:
-            return False
+        if has_scipy:
+            # 使用局部最小值检测可能的底部
+            order = 5  # 窗口大小，用于确定局部极值
+            local_min_indices = argrelextrema(prices, np.less, order=order)[0]
+        else:
+            # 使用简化的方法检测局部最小值
+            local_min_indices = []
+            for i in range(2, len(prices) - 2):
+                if (prices[i-2] > prices[i-1] > prices[i] < prices[i+1] < prices[i+2]):
+                    local_min_indices.append(i)
         
-        # 寻找底部之后的初升段高点
-        max_idx = min_idx
-        max_price = min_price
+        # 过滤出在过去3-12个月内形成的底部
+        recent_bottoms = []
+        for idx in local_min_indices:
+            if len(prices) - 252 <= idx <= len(prices) - 63:  # 约3-12个月的交易日
+                # 计算底部前后的价格变化率，确认是真正的低点
+                before_bottom = prices[max(0, idx-20):idx]
+                after_bottom = prices[idx:min(len(prices), idx+20)]
+                
+                if len(before_bottom) > 0 and len(after_bottom) > 5:
+                    # 底部前有下跌，底部后有上涨
+                    before_change = (before_bottom[0] - prices[idx]) / before_bottom[0] if before_bottom[0] > 0 else 0
+                    after_change = (after_bottom[-1] - prices[idx]) / prices[idx] if prices[idx] > 0 else 0
+                    
+                    # 底部前下跌超过10%，底部后上涨超过10%
+                    if before_change > 0.1 and after_change > 0.1:
+                        recent_bottoms.append(idx)
         
-        # 在底部后的30个交易日内寻找初升段高点
-        search_end = min(min_idx + 30, len(prices))
-        for i in range(min_idx + 1, search_end):
-            if prices[i] > max_price:
-                max_price = prices[i]
-                max_idx = i
-        
-        # 初升段幅度
-        initial_rise = max_price - min_price
-        if initial_rise <= 0:
-            return False
-        
-        # 检查之后是否有回测20%
-        pullback_point = None
-        for i in range(max_idx + 1, len(prices)):
-            pullback = (max_price - prices[i]) / initial_rise
-            if 0.18 <= pullback <= 0.22:  # 回测幅度接近20%
-                pullback_point = i
-                break  # 找到第一个满足条件的回测点
-        
-        # 如果找到了回测点，检查是否在近期(4个月内)
-        if pullback_point is not None and pullback_point >= (len(prices) - 84):  # 约4个月的交易日
-            return True
+        # 对每个底部检查初升段和回测
+        for bottom_idx in recent_bottoms:
+            bottom_price = prices[bottom_idx]
+            
+            # 寻找初升段高点
+            initial_rise_end = min(bottom_idx + 30, len(prices))
+            rise_segment = prices[bottom_idx:initial_rise_end]
+            
+            if len(rise_segment) < 10:  # 需要足够的数据
+                continue
+                
+            # 找到初升段的最高点
+            peak_idx = bottom_idx + np.argmax(rise_segment)
+            peak_price = prices[peak_idx]
+            
+            # 计算初升段的上涨幅度
+            rise_percent = (peak_price / bottom_price - 1) * 100
+            
+            # 初升段上涨超过15%
+            if rise_percent < 15:
+                continue
+                
+            # 找出初升段之后的回测点
+            pullback_start = peak_idx + 1
+            pullback_end = min(peak_idx + 20, len(prices))  # 回测通常发生在短期内
+            
+            # 如果没有足够的回测数据，跳过
+            if pullback_end <= pullback_start:
+                continue
+                
+            # 在回测区间寻找最低点
+            pullback_segment = prices[pullback_start:pullback_end]
+            pullback_idx = pullback_start + np.argmin(pullback_segment)
+            pullback_price = prices[pullback_idx]
+            
+            # 计算回测幅度
+            pullback_percent = (peak_price - pullback_price) / (peak_price - bottom_price) * 100
+            
+            # 判断是否满足回测约20%的条件
+            if 18 <= pullback_percent <= 25:
+                # 检查回测完成点是否在近期(4个月内)
+                if pullback_idx >= (len(prices) - 84):
+                    
+                    # 检查回测后的企稳和上涨
+                    if pullback_idx + 10 < len(prices):
+                        after_pullback = prices[pullback_idx:pullback_idx+10]
+                        # 回测后没有继续下跌
+                        if min(after_pullback) >= pullback_price * 0.97:
+                            # 回测后有企稳迹象
+                            last_5_days = prices[pullback_idx+5:pullback_idx+10] if pullback_idx+10 < len(prices) else []
+                            if len(last_5_days) > 0 and np.mean(last_5_days) > pullback_price:
+                                # 使用技术指标确认企稳
+                                # 计算回测点的RSI
+                                rsi = get_rsi(prices, period=14)[pullback_idx]
+                                # 计算回测点的MACD
+                                macd, signal, hist = get_macd(prices)
+                                
+                                # RSI回升或MACD柱状图回升，认为有企稳迹象
+                                if (rsi > 40 or
+                                    (pullback_idx < len(hist) and hist[pullback_idx] > hist[pullback_idx-1])):
+                                    return True
         
         return False
     except Exception as e:
@@ -320,7 +547,7 @@ def filter_by_initial_pullback_20_percent(stock_info):
         return False
 
 
-def filter_stocks(min_pe=5, max_pe=50, market_type="US", strategies=None, output_dir=None):
+def filter_stocks(min_pe=5, max_pe=50, market_type="US", strategies=None, output_dir=None, parallel=False):
     """
     根据多种策略筛选股票
     
@@ -330,10 +557,26 @@ def filter_stocks(min_pe=5, max_pe=50, market_type="US", strategies=None, output
         market_type (str): 市场类型
         strategies (list): 筛选策略列表，默认为全部策略
         output_dir (str): 输出文件目录，如果提供则将结果实时写入文件
+        parallel (bool): 是否使用并行处理提高效率
         
     Returns:
         dict: 按策略分类的股票列表
     """
+    import os
+    import csv
+    import concurrent.futures
+    import traceback
+    from datetime import datetime
+    
+    # 安全导入TA-Lib
+    has_talib = False
+    try:
+        import talib
+        has_talib = True
+        print("已加载TA-Lib技术分析库")
+    except ImportError:
+        print("未找到TA-Lib库，将使用简化版技术分析")
+    
     if strategies is None:
         strategies = ["volume_surge", "pullback_50", "initial_pullback_20"]
     
@@ -384,64 +627,109 @@ def filter_stocks(min_pe=5, max_pe=50, market_type="US", strategies=None, output
             # 立即刷新
             file.flush()
     
+    def process_stock(stock, stock_index, total_stocks):
+        """处理单个股票的函数，用于并行处理"""
+        try:
+            print(f"处理进度: {stock_index+1}/{total_stocks} - 当前股票: {stock.stock_code} ({stock.stock_name})")
+            
+            # 检查每个策略
+            strategy_results = {
+                "volume_surge": False,
+                "pullback_50": False,
+                "initial_pullback_20": False
+            }
+            
+            matched_strategies = []
+            
+            if "volume_surge" in strategies and filter_by_volume_surge(stock):
+                strategy_results["volume_surge"] = True
+                matched_strategies.append("volume_surge")
+            
+            if "pullback_50" in strategies and filter_by_pullback_50_percent(stock):
+                strategy_results["pullback_50"] = True
+                matched_strategies.append("pullback_50")
+            
+            if "initial_pullback_20" in strategies and filter_by_initial_pullback_20_percent(stock):
+                strategy_results["initial_pullback_20"] = True
+                matched_strategies.append("initial_pullback_20")
+            
+            return stock, strategy_results, matched_strategies
+        except Exception as e:
+            print(f"处理股票 {stock.stock_code} 时出错: {e}")
+            traceback.print_exc()
+            return stock, {"volume_surge": False, "pullback_50": False, "initial_pullback_20": False}, []
+    
     total_stocks = len(pe_filtered_stocks)
-    for i, stock in enumerate(pe_filtered_stocks):
-        print(f"处理进度: {i+1}/{total_stocks} - 当前股票: {stock.stock_code} ({stock.stock_name})")
+    
+    # 并行处理
+    if parallel and total_stocks > 10:
+        chunk_size = min(10, max(1, total_stocks // 5))  # 动态调整批次大小
+        print(f"使用并行处理，批次大小: {chunk_size}")
         
-        # 检查每个策略
-        strategy_results = {
-            "volume_surge": False,
-            "pullback_50": False,
-            "initial_pullback_20": False
-        }
-        
-        matched_strategies = []
-        
-        if "volume_surge" in strategies and filter_by_volume_surge(stock):
-            result["volume_surge"].append(stock)
-            matched_strategies.append("volume_surge")
-            strategy_results["volume_surge"] = True
+        with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+            futures = []
+            for i, stock in enumerate(pe_filtered_stocks):
+                future = executor.submit(process_stock, stock, i, total_stocks)
+                futures.append(future)
             
-            # 如果有文件输出，则立即写入
-            if output_dir and "volume_surge" in csv_writers:
-                csv_writers["volume_surge"].writerow([stock.stock_code, stock.stock_name, stock.pe_ratio])
-                file_handlers["volume_surge"].flush()  # 确保立即写入磁盘
-        
-        if "pullback_50" in strategies and filter_by_pullback_50_percent(stock):
-            result["pullback_50"].append(stock)
-            matched_strategies.append("pullback_50")
-            strategy_results["pullback_50"] = True
+            for future in concurrent.futures.as_completed(futures):
+                stock, strategy_results, matched_strategies = future.result()
+                
+                # 更新结果集合
+                for strategy_name, matched in strategy_results.items():
+                    if matched:
+                        result[strategy_name].append(stock)
+                        
+                        # 如果有文件输出，则立即写入
+                        if output_dir and strategy_name in csv_writers:
+                            csv_writers[strategy_name].writerow([stock.stock_code, stock.stock_name, stock.pe_ratio])
+                            file_handlers[strategy_name].flush()
+                
+                # 如果符合所有指定的策略，添加到all_strategies列表
+                if len(matched_strategies) == len(strategies):
+                    result["all_strategies"].append(stock)
+                    
+                    # 如果有文件输出，则立即写入
+                    if output_dir and "all_strategies" in csv_writers:
+                        csv_writers["all_strategies"].writerow([
+                            stock.stock_code, 
+                            stock.stock_name, 
+                            stock.pe_ratio,
+                            strategy_results["volume_surge"],
+                            strategy_results["pullback_50"],
+                            strategy_results["initial_pullback_20"]
+                        ])
+                        file_handlers["all_strategies"].flush()
+    else:
+        # 串行处理
+        for i, stock in enumerate(pe_filtered_stocks):
+            stock, strategy_results, matched_strategies = process_stock(stock, i, total_stocks)
             
-            # 如果有文件输出，则立即写入
-            if output_dir and "pullback_50" in csv_writers:
-                csv_writers["pullback_50"].writerow([stock.stock_code, stock.stock_name, stock.pe_ratio])
-                file_handlers["pullback_50"].flush()  # 确保立即写入磁盘
-        
-        if "initial_pullback_20" in strategies and filter_by_initial_pullback_20_percent(stock):
-            result["initial_pullback_20"].append(stock)
-            matched_strategies.append("initial_pullback_20")
-            strategy_results["initial_pullback_20"] = True
+            # 更新结果集合
+            for strategy_name, matched in strategy_results.items():
+                if matched:
+                    result[strategy_name].append(stock)
+                    
+                    # 如果有文件输出，则立即写入
+                    if output_dir and strategy_name in csv_writers:
+                        csv_writers[strategy_name].writerow([stock.stock_code, stock.stock_name, stock.pe_ratio])
+                        file_handlers[strategy_name].flush()
             
-            # 如果有文件输出，则立即写入
-            if output_dir and "initial_pullback_20" in csv_writers:
-                csv_writers["initial_pullback_20"].writerow([stock.stock_code, stock.stock_name, stock.pe_ratio])
-                file_handlers["initial_pullback_20"].flush()  # 确保立即写入磁盘
-        
-        # 如果符合所有指定的策略，添加到all_strategies列表
-        if len(matched_strategies) == len(strategies):
-            result["all_strategies"].append(stock)
-            
-            # 如果有文件输出，则立即写入
-            if output_dir and "all_strategies" in csv_writers:
-                csv_writers["all_strategies"].writerow([
-                    stock.stock_code, 
-                    stock.stock_name, 
-                    stock.pe_ratio,
-                    strategy_results["volume_surge"],
-                    strategy_results["pullback_50"],
-                    strategy_results["initial_pullback_20"]
-                ])
-                file_handlers["all_strategies"].flush()  # 确保立即写入磁盘
+            # 如果符合所有指定的策略，添加到all_strategies列表
+            if len(matched_strategies) == len(strategies):
+                result["all_strategies"].append(stock)
+                
+                # 如果有文件输出，则立即写入
+                if output_dir and "all_strategies" in csv_writers:
+                    csv_writers["all_strategies"].writerow([
+                        stock.stock_code, 
+                        stock.stock_name, 
+                        stock.pe_ratio,
+                        strategy_results["volume_surge"],
+                        strategy_results["pullback_50"],
+                        strategy_results["initial_pullback_20"]
+                    ])
+                    file_handlers["all_strategies"].flush()
     
     # 关闭所有文件
     if output_dir:
@@ -453,22 +741,237 @@ def filter_stocks(min_pe=5, max_pe=50, market_type="US", strategies=None, output
     return result
 
 
+def calculate_rsi(prices, period=14):
+    """
+    计算相对强弱指数(RSI)，TA-Lib的替代方案
+    
+    Args:
+        prices (numpy.array): 价格数组
+        period (int): 周期，默认14天
+        
+    Returns:
+        numpy.array: RSI值数组
+    """
+    import numpy as np
+    
+    # 确保输入是numpy数组
+    prices = np.array(prices)
+    
+    # 计算价格变化
+    deltas = np.diff(prices)
+    seed = deltas[:period+1]
+    
+    # 计算增长和下跌
+    up = seed[seed >= 0].sum() / period
+    down = -seed[seed < 0].sum() / period
+    
+    if down == 0:  # 避免除以零
+        return np.ones_like(prices) * 100
+    
+    rs = up / down
+    rsi = np.zeros_like(prices)
+    rsi[period] = 100. - (100. / (1. + rs))
+    
+    # 计算剩余的RSI
+    for i in range(period + 1, len(prices)):
+        delta = deltas[i - 1]  # 当前价格变化
+        
+        if delta > 0:
+            upval = delta
+            downval = 0.
+        else:
+            upval = 0.
+            downval = -delta
+            
+        # 使用平滑移动平均
+        up = (up * (period - 1) + upval) / period
+        down = (down * (period - 1) + downval) / period
+        
+        rs = up / down if down != 0 else float('inf')
+        rsi[i] = 100. - (100. / (1. + rs))
+        
+    # 填充前period个值
+    rsi[:period] = rsi[period]
+    
+    return rsi
+
+
+def calculate_macd(prices, fast_period=12, slow_period=26, signal_period=9):
+    """
+    计算MACD，TA-Lib的替代方案
+    
+    Args:
+        prices (numpy.array): 价格数组
+        fast_period (int): 快线周期
+        slow_period (int): 慢线周期
+        signal_period (int): 信号线周期
+        
+    Returns:
+        tuple: (macd, signal, histogram)
+    """
+    import numpy as np
+    
+    # 确保输入是numpy数组
+    prices = np.array(prices)
+    
+    # 计算EMA
+    def ema(values, period):
+        alpha = 2.0 / (period + 1)
+        result = np.zeros_like(values)
+        # 初始化第一个值
+        result[0] = values[0]
+        
+        # 计算EMA
+        for i in range(1, len(values)):
+            result[i] = alpha * values[i] + (1 - alpha) * result[i-1]
+            
+        return result
+    
+    # 计算快线和慢线EMA
+    ema_fast = ema(prices, fast_period)
+    ema_slow = ema(prices, slow_period)
+    
+    # 计算MACD线
+    macd_line = ema_fast - ema_slow
+    
+    # 计算信号线 (MACD的EMA)
+    signal_line = ema(macd_line, signal_period)
+    
+    # 计算柱状图
+    histogram = macd_line - signal_line
+    
+    return macd_line, signal_line, histogram
+
+
+def calculate_bbands(prices, period=20, num_std_dev=2):
+    """
+    计算布林带，TA-Lib的替代方案
+    
+    Args:
+        prices (numpy.array): 价格数组
+        period (int): 周期
+        num_std_dev (float): 标准差倍数
+        
+    Returns:
+        tuple: (upper, middle, lower)
+    """
+    import numpy as np
+    
+    # 确保输入是numpy数组
+    prices = np.array(prices)
+    
+    # 简单移动平均
+    def sma(values, period):
+        return np.convolve(values, np.ones(period)/period, mode='valid')
+    
+    # 计算中轨(SMA)
+    middle_band = np.zeros_like(prices)
+    for i in range(period-1, len(prices)):
+        middle_band[i] = np.mean(prices[i-(period-1):i+1])
+    
+    # 填充前period-1个值
+    middle_band[:period-1] = middle_band[period-1]
+    
+    # 计算标准差
+    std_dev = np.zeros_like(prices)
+    for i in range(period-1, len(prices)):
+        std_dev[i] = np.std(prices[i-(period-1):i+1], ddof=1)
+    
+    # 填充前period-1个值
+    std_dev[:period-1] = std_dev[period-1]
+    
+    # 计算上轨和下轨
+    upper_band = middle_band + (std_dev * num_std_dev)
+    lower_band = middle_band - (std_dev * num_std_dev)
+    
+    return upper_band, middle_band, lower_band
+
+
+def have_talib():
+    """检查是否安装了TA-Lib"""
+    try:
+        import talib
+        return True
+    except ImportError:
+        return False
+
+
+def get_rsi(prices, period=14):
+    """获取RSI，优先使用TA-Lib，否则使用替代实现"""
+    if have_talib():
+        import talib
+        return talib.RSI(prices, timeperiod=period)
+    else:
+        return calculate_rsi(prices, period)
+
+
+def get_macd(prices, fast_period=12, slow_period=26, signal_period=9):
+    """获取MACD，优先使用TA-Lib，否则使用替代实现"""
+    if have_talib():
+        import talib
+        return talib.MACD(prices, fastperiod=fast_period, slowperiod=slow_period, signalperiod=signal_period)
+    else:
+        return calculate_macd(prices, fast_period, slow_period, signal_period)
+
+
+def get_bbands(prices, period=20, num_std_dev=2):
+    """获取布林带，优先使用TA-Lib，否则使用替代实现"""
+    if have_talib():
+        import talib
+        return talib.BBANDS(prices, timeperiod=period, nbdevup=num_std_dev, nbdevdn=num_std_dev)
+    else:
+        return calculate_bbands(prices, period, num_std_dev)
+
+
 if __name__ == "__main__":
-    # 确保已安装yfinance库
+    # 确保已安装必要的库
     try:
         import yfinance
     except ImportError:
         print("请先安装yfinance库: pip install yfinance")
         sys.exit(1)
     
+    # 尝试导入scipy，用于更精确的算法
+    try:
+        import scipy
+        print("已加载scipy库用于高级数据分析")
+    except ImportError:
+        print("警告: 未找到scipy库，将使用简化版算法。建议安装: pip install scipy")
+    
+    # 尝试导入TA-Lib
+    try:
+        import talib
+        print("已加载TA-Lib技术分析库")
+    except ImportError:
+        print("警告: 未找到TA-Lib库，将使用简化版技术分析。请考虑安装TA-Lib以获得更准确的结果")
+        print("安装指南: https://github.com/mrjbq7/ta-lib")
+    
     print("开始筛选股票...")
     
+    # 命令行参数解析
+    import argparse
+    
+    parser = argparse.ArgumentParser(description="股票筛选工具")
+    parser.add_argument("--min_pe", type=float, default=5, help="最小市盈率")
+    parser.add_argument("--max_pe", type=float, default=15, help="最大市盈率")
+    parser.add_argument("--market", type=str, default="US", help="市场类型：US(美股)、HK(港股)、CN(A股)")
+    parser.add_argument("--parallel", action="store_true", help="启用并行处理提高效率")
+    parser.add_argument("--test", action="store_true", help="测试模式，只处理少量样本股票")
+    parser.add_argument("--strategies", type=str, default="all", 
+                        help="指定要使用的策略(逗号分隔): volume_surge,pullback_50,initial_pullback_20，或使用'all'表示全部")
+    
+    args = parser.parse_args()
+    
+    # 解析策略
+    selected_strategies = None  # None表示使用默认值(全部策略)
+    if args.strategies != "all":
+        selected_strategies = args.strategies.split(",")
+    
     # 测试单个股票的数据获取 - 用于调试
-    test_mode = False
-    if test_mode:
+    if args.test:
         try:
             # 测试图中的股票
-            test_stocks = ["VSCO", "KSS", "AAPL", "XP", "ABLV"]
+            test_stocks = ["AMRC", "KODK", "MSFT", "VSCO", "MOMO"]
             for test_stock_code in test_stocks:
                 print(f"\n测试获取 {test_stock_code} 的历史数据...")
                 history = get_stock_history(test_stock_code)
@@ -494,25 +997,39 @@ if __name__ == "__main__":
                     price_percentile = (latest_price - min_price) / (max_price - min_price) * 100
                     print(f"当前价格位于历史区间的: {price_percentile:.2f}%")
                     
-                    # 计算最近10个交易日的平均成交量
-                    recent_avg_volume = np.mean(history['Volume'].iloc[-10:])
-                    # 计算之前30个交易日的平均成交量
-                    previous_avg_volume = np.mean(history['Volume'].iloc[-40:-10]) 
-                    volume_increase_ratio = recent_avg_volume / previous_avg_volume
-                    print(f"最近10天平均成交量是之前的 {volume_increase_ratio:.2f} 倍")
-                    
-                    # 检查连续高成交量
+                    # 计算最近成交量数据
                     volumes = history['Volume'].values
-                    previous_avg = np.mean(volumes[-40:-10])
-                    high_volume_days = 0
-                    for i in range(1, 11):  # 检查最近10天
-                        if volumes[-i] > previous_avg * 2.5:
-                            high_volume_days += 1
-                    print(f"最近10天中有 {high_volume_days} 天成交量是之前均值的2.5倍以上")
                     
-                    # 查看价格趋势
-                    price_trend = history['Close'].iloc[-1] / history['Close'].iloc[-10] - 1
-                    print(f"最近10天价格变化: {price_trend:.2%}")
+                    # 计算移动平均成交量
+                    ma_volume_10 = np.mean(history['Volume'].iloc[-10:])    # 10日均量
+                    ma_volume_20 = np.mean(history['Volume'].iloc[-20:])    # 20日均量
+                    ma_volume_50 = np.mean(history['Volume'].iloc[-50:])    # 50日均量
+                    
+                    # 计算成交量比例
+                    volume_ratio_10_50 = ma_volume_10 / ma_volume_50 if ma_volume_50 > 0 else 0
+                    volume_ratio_20_50 = ma_volume_20 / ma_volume_50 if ma_volume_50 > 0 else 0
+                    
+                    print(f"最近10天平均成交量是50日均量的 {volume_ratio_10_50:.2f} 倍")
+                    print(f"最近20天平均成交量是50日均量的 {volume_ratio_20_50:.2f} 倍")
+                    
+                    # 技术指标
+                    try:
+                        import talib
+                        # 计算RSI
+                        rsi14 = talib.RSI(history['Close'].values, timeperiod=14)[-1]
+                        print(f"当前14日RSI: {rsi14:.2f}")
+                        
+                        # 计算MACD
+                        macd, macdsignal, macdhist = talib.MACD(history['Close'].values)
+                        print(f"当前MACD: {macd[-1]:.4f}, 信号线: {macdsignal[-1]:.4f}, 柱状图: {macdhist[-1]:.4f}")
+                        
+                        # 计算布林带
+                        upper, middle, lower = talib.BBANDS(history['Close'].values)
+                        bb_width = (upper[-1] - lower[-1]) / middle[-1]
+                        print(f"布林带宽度: {bb_width:.4f}")
+                        
+                    except ImportError:
+                        print("未安装TA-Lib库，无法计算技术指标")
                     
                     # 模拟筛选
                     class MockStock:
@@ -541,11 +1058,18 @@ if __name__ == "__main__":
             sys.exit(1)
     
     # 创建输出目录
-    output_dir = os.path.join(parent_dir, "stock_filter_results")
+    output_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "stock_filter_results")
     
     # 筛选符合所有策略的股票，并将结果实时写入文件
     try:
-        filtered_stocks = filter_stocks(min_pe=5, max_pe=15, output_dir=output_dir)
+        filtered_stocks = filter_stocks(
+            min_pe=args.min_pe, 
+            max_pe=args.max_pe, 
+            market_type=args.market, 
+            strategies=selected_strategies, 
+            output_dir=output_dir, 
+            parallel=args.parallel
+        )
         
         # 控制台也打印一下结果概要
         print("\n筛选结果概要:")
@@ -553,6 +1077,12 @@ if __name__ == "__main__":
         print(f"符合策略2(翻倍后回调50%)的股票: {len(filtered_stocks['pullback_50'])}支")
         print(f"符合策略3(初升段回测20%)的股票: {len(filtered_stocks['initial_pullback_20'])}支")
         print(f"符合所有策略的股票: {len(filtered_stocks['all_strategies'])}支")
+        
+        # 如果找到符合所有策略的股票，显示详细信息
+        if filtered_stocks['all_strategies']:
+            print("\n符合所有策略的股票:")
+            for i, stock in enumerate(filtered_stocks['all_strategies']):
+                print(f"{i+1}. {stock.stock_code} - {stock.stock_name} (PE: {stock.pe_ratio})")
     except Exception as e:
         print(f"筛选股票时出错: {e}")
         import traceback
